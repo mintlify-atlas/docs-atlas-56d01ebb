@@ -1,0 +1,510 @@
+---
+title: 'chameleon journal'
+description: 'Query and audit operation logs'
+---
+
+## Synopsis
+
+```bash
+chameleon journal <subcommand> [flags]
+```
+
+View and search the operation journal (audit log).
+
+## Description
+
+The journal is an **append-only log** of all ChameleonDB operations. It provides:
+
+- **Complete audit trail** - Every operation is logged
+- **Daily rotation** - Stored in `.chameleon/journal/` with date-based files
+- **Never deleted** - Append-only, immutable history
+- **Multiple formats** - Table or JSON output
+
+Use the journal to:
+- Audit database changes
+- Debug migration issues
+- Track schema evolution
+- Monitor operation performance
+
+## Subcommands
+
+- [`journal last`](#journal-last) - Show last N operations
+- [`journal errors`](#journal-errors) - Show error operations
+- [`journal migrations`](#journal-migrations) - Show migration history
+- [`journal schema`](#journal-schema) - Show schema version history (vault)
+
+## Global Flags
+
+<ParamField path="--format" type="string" default="table">
+  Output format: `table` or `json`
+  
+  ```bash
+  chameleon journal last --format=json
+  ```
+</ParamField>
+
+---
+
+## journal last
+
+Show the most recent journal entries.
+
+### Synopsis
+
+```bash
+chameleon journal last [n]
+```
+
+### Arguments
+
+<ParamField path="n" type="number" default="10">
+  Number of entries to show
+</ParamField>
+
+### Flags
+
+<ParamField path="--limit" type="number" default="10">
+  Number of entries to show (alternative to positional arg)
+</ParamField>
+
+### Examples
+
+#### Last 10 Entries (Default)
+
+```bash
+chameleon journal last
+```
+
+**Output:**
+```
+Timestamp                Action      Status      Details
+─────────────────────────────────────────────────────────────────
+2026-03-03 10:30:15      migrate     started     action=check dry_run=false apply=false
+2026-03-03 10:30:16      migrate     no_changes  action=check
+2026-03-03 14:25:30      migrate     started     action=check dry_run=false apply=true
+2026-03-03 14:25:31      migrate     applied     duration=23ms
+2026-03-03 15:10:00      verify      completed   
+```
+
+#### Last 20 Entries
+
+```bash
+chameleon journal last 20
+```
+
+#### JSON Format
+
+```bash
+chameleon journal last 5 --format=json
+```
+
+**Output:**
+```json
+[
+  {
+    "timestamp": "2026-03-03T14:25:31Z",
+    "action": "migrate",
+    "status": "applied",
+    "duration_ms": 23
+  },
+  {
+    "timestamp": "2026-03-03T15:10:00Z",
+    "action": "verify",
+    "status": "completed"
+  }
+]
+```
+
+---
+
+## journal errors
+
+Show error operations from today's journal.
+
+### Synopsis
+
+```bash
+chameleon journal errors
+```
+
+### Examples
+
+#### No Errors
+
+```bash
+chameleon journal errors
+```
+
+**Output:**
+```
+✓ No errors found
+```
+
+#### Errors Found
+
+```bash
+chameleon journal errors
+```
+
+**Output:**
+```
+Timestamp                Action      Status      Details
+─────────────────────────────────────────────────────────────────
+2026-03-03 11:45:23      migrate     error       error=failed to connect to database: connection ref...
+2026-03-03 12:30:15      migrate     error       error=failed to execute migration: ERROR: column "a...
+```
+
+#### JSON Format
+
+```bash
+chameleon journal errors --format=json
+```
+
+**Output:**
+```json
+[
+  {
+    "timestamp": "2026-03-03T11:45:23Z",
+    "action": "migrate",
+    "status": "error",
+    "error": "failed to connect to database: connection refused"
+  }
+]
+```
+
+---
+
+## journal migrations
+
+Show migration history from the journal.
+
+### Synopsis
+
+```bash
+chameleon journal migrations
+```
+
+### Examples
+
+#### Migration History
+
+```bash
+chameleon journal migrations
+```
+
+**Output:**
+```
+Timestamp                Version              Status    Duration
+─────────────────────────────────────────────────────────────────
+2026-03-03 10:32:15      v001                 applied   45ms
+2026-03-03 14:25:31      v002                 applied   23ms
+2026-03-03 16:10:22      v003                 applied   67ms
+```
+
+#### No Migrations Yet
+
+```bash
+chameleon journal migrations
+```
+
+**Output:**
+```
+ℹ No migration entries found
+```
+
+#### JSON Format
+
+```bash
+chameleon journal migrations --format=json
+```
+
+**Output:**
+```json
+[
+  {
+    "timestamp": "2026-03-03T10:32:15Z",
+    "action": "migrate",
+    "status": "applied",
+    "duration_ms": 45
+  },
+  {
+    "timestamp": "2026-03-03T14:25:31Z",
+    "action": "migrate",
+    "status": "applied",
+    "duration_ms": 23
+  }
+]
+```
+
+---
+
+## journal schema
+
+View schema version history from the Schema Vault.
+
+### Synopsis
+
+```bash
+chameleon journal schema [version]
+```
+
+### Arguments
+
+<ParamField path="version" type="string" optional>
+  Specific version to view details for (e.g., v001, v002)
+  
+  If omitted, shows all versions.
+</ParamField>
+
+### Examples
+
+#### All Versions
+
+```bash
+chameleon journal schema
+```
+
+**Output:**
+```
+📖 Schema Version History
+
+v003 (current) ✓
+├─ Hash: 9e2f5a1b...
+├─ Date: 2026-03-03 16:10:00
+├─ Author: dperalta
+├─ Changes: Added Comment entity
+└─ Parent: v002
+
+v002
+├─ Hash: 7d4e1c2a...
+├─ Date: 2026-03-03 14:25:00
+├─ Author: dperalta
+├─ Changes: Added age field to User
+└─ Parent: v001
+
+v001
+├─ Hash: 3f2a8b9c...
+├─ Date: 2026-03-03 10:30:00
+├─ Author: dperalta
+├─ Changes: Initial schema
+└─ Parent: none
+```
+
+#### Specific Version
+
+```bash
+chameleon journal schema v002
+```
+
+**Output:**
+```
+📋 Schema Version: v002
+─────────────────────────────────────────
+Hash:      7d4e1c2a3b5f6e8d9a1b2c3d4e5f6a7b
+Timestamp: 2026-03-03T14:25:00Z
+Author:    dperalta
+Parent:    v001
+Status:    locked ✓
+
+📝 Changes Summary:
+  Added age field to User
+
+📂 Files:
+  • schemas/users.cham
+  • schemas/posts.cham
+```
+
+#### No Vault Found
+
+```bash
+chameleon journal schema
+```
+
+**Output:**
+```
+❌ No vault found
+   Run 'chameleon migrate' to initialize
+```
+
+#### Version Not Found
+
+```bash
+chameleon journal schema v999
+```
+
+**Output:**
+```
+❌ Version v999 not found
+```
+
+---
+
+## Journal File Structure
+
+### Location
+
+```
+.chameleon/journal/
+├── 2026-03-01.log
+├── 2026-03-02.log
+└── 2026-03-03.log  # Today's log
+```
+
+### Format
+
+Each log entry is JSON:
+
+```json
+{
+  "timestamp": "2026-03-03T14:25:31Z",
+  "action": "migrate",
+  "status": "applied",
+  "duration": 23,
+  "details": {
+    "version": "v002",
+    "tables_created": 0
+  }
+}
+```
+
+### Daily Rotation
+
+- New file created daily
+- Old files never deleted (append-only)
+- Date format: `YYYY-MM-DD.log`
+
+## Common Use Cases
+
+### Debug Failed Migration
+
+```bash
+# Find all errors
+chameleon journal errors
+
+# Get last 50 entries for context
+chameleon journal last 50
+```
+
+### Audit Schema Changes
+
+```bash
+# View all schema versions
+chameleon journal schema
+
+# Check specific version
+chameleon journal schema v002
+```
+
+### Monitor Performance
+
+```bash
+# Export to JSON for analysis
+chameleon journal migrations --format=json > migrations.json
+```
+
+### Track User Activity
+
+```bash
+# View recent operations
+chameleon journal last 100
+```
+
+## Integration Examples
+
+### Export to CSV
+
+```bash
+#!/bin/bash
+# Export migration history to CSV
+
+chameleon journal migrations --format=json | \
+  jq -r '.[] | [.timestamp, .action, .status, .duration_ms] | @csv' > migrations.csv
+```
+
+### Alert on Errors
+
+```bash
+#!/bin/bash
+# Check for errors in last hour
+
+ERRORS=$(chameleon journal errors --format=json | jq length)
+
+if [ "$ERRORS" -gt 0 ]; then
+  echo "⚠️  $ERRORS errors detected in journal"
+  chameleon journal errors
+  exit 1
+fi
+```
+
+### Daily Report
+
+```bash
+#!/bin/bash
+# Generate daily migration report
+
+echo "ChameleonDB Daily Report - $(date)"
+echo ""
+echo "Migrations today:"
+chameleon journal migrations
+echo ""
+echo "Errors today:"
+chameleon journal errors
+```
+
+## Troubleshooting
+
+### No Journal Entries
+
+```
+ℹ No journal entries found
+```
+
+**Reason:** No operations have been performed yet.
+
+**Solution:** Run a migration or other command:
+
+```bash
+chameleon migrate
+```
+
+### Cannot Read Journal
+
+```
+❌ failed to read journal: permission denied
+```
+
+**Solution:**
+Ensure permissions:
+
+```bash
+chmod -R u+r .chameleon/journal/
+```
+
+### Journal File Corrupted
+
+If a journal file is corrupted (invalid JSON), the command may fail.
+
+**Recovery:**
+
+1. Identify corrupted file:
+   ```bash
+   jq . .chameleon/journal/2026-03-03.log
+   ```
+
+2. Move to backup:
+   ```bash
+   mv .chameleon/journal/2026-03-03.log .chameleon/journal/2026-03-03.log.backup
+   ```
+
+3. Create empty file:
+   ```bash
+   touch .chameleon/journal/2026-03-03.log
+   ```
+
+## See Also
+
+- [`chameleon verify`](/cli/verify) - Verify vault integrity
+- [`chameleon status`](/cli/status) - Quick status overview
+- [`chameleon migrate`](/cli/migrate) - Apply migrations (logged to journal)
+- [Schema Vault](/concepts/schema-vault) - Learn about version tracking
+- [Audit Logging](/concepts/schema-vault) - Journal design and guarantees

@@ -1,0 +1,443 @@
+---
+title: "Constraints"
+description: "Define validation rules and constraints in ChameleonDB schemas"
+---
+
+Constraints enforce data integrity rules at the schema level. ChameleonDB validates constraints both at compile time and runtime.
+
+## Primary Keys
+
+Every entity must have exactly one primary key:
+
+<ParamField path="primary" type="constraint">
+  Designates a field as the entity's primary key.
+  
+  **Syntax:**
+  ```go
+  fieldName: type primary
+  ```
+  
+  **Example:**
+  ```go
+  entity User {
+      id: uuid primary,  // Primary key
+      email: string,
+  }
+  ```
+  
+  **Rules:**
+  - Each entity must have exactly one `primary` field
+  - Primary keys are automatically `unique` and non-null
+  - Primary keys cannot be modified after creation
+  
+  **SQL Mapping:** `PRIMARY KEY`
+</ParamField>
+
+### Primary Key Best Practices
+
+```go
+// ✓ Good - UUID primary key
+entity User {
+    id: uuid primary,
+}
+
+// ✓ Also valid - String primary key
+entity Country {
+    code: string primary,  // e.g., "US", "UK"
+}
+
+// ✗ Bad - No primary key
+entity User {
+    email: string unique,  // Not enough - needs primary key
+}
+
+// ✗ Bad - Multiple primary keys
+entity User {
+    id: uuid primary,
+    email: string primary,  // Error: only one primary key allowed
+}
+```
+
+## Unique Constraints
+
+Enforce uniqueness across all rows:
+
+<ParamField path="unique" type="constraint">
+  Ensures field values are unique across all entities.
+  
+  **Syntax:**
+  ```go
+  fieldName: type unique
+  ```
+  
+  **Example:**
+  ```go
+  entity User {
+      id: uuid primary,
+      email: string unique,     // No two users can have the same email
+      username: string unique,  // No two users can have the same username
+  }
+  ```
+  
+  **Rules:**
+  - Unique fields cannot have duplicate values
+  - `NULL` values are considered distinct (multiple NULLs allowed if nullable)
+  - Primary keys are implicitly unique
+  
+  **SQL Mapping:** `UNIQUE`
+</ParamField>
+
+### Unique Constraint Examples
+
+```go
+entity Product {
+    id: uuid primary,
+    sku: string unique,        // Product SKU must be unique
+    name: string,              // Name can be duplicated
+}
+
+entity Email {
+    id: uuid primary,
+    address: string unique,    // Email addresses must be unique
+    user_id: uuid,
+}
+```
+
+## Nullable Fields
+
+Allow fields to have NULL values:
+
+<ParamField path="nullable" type="constraint">
+  Allows a field to be NULL (empty/missing).
+  
+  **Syntax:**
+  ```go
+  fieldName: type nullable
+  ```
+  
+  **Example:**
+  ```go
+  entity User {
+      id: uuid primary,
+      email: string,
+      bio: string nullable,        // Bio is optional
+      age: int nullable,           // Age is optional
+      deleted_at: timestamp nullable,  // NULL until deleted
+  }
+  ```
+  
+  **Rules:**
+  - Fields are NOT NULL by default
+  - Primary keys cannot be nullable
+  - Foreign keys can be nullable (optional relations)
+  
+  **SQL Mapping:** `NULL` (default is `NOT NULL`)
+</ParamField>
+
+### Nullable Best Practices
+
+```go
+// ✓ Good - Explicit nullable for optional fields
+entity User {
+    id: uuid primary,
+    email: string,              // Required
+    bio: string nullable,       // Optional
+    middle_name: string nullable,  // Optional
+}
+
+// ✓ Good - Nullable foreign key (optional relation)
+entity Post {
+    id: uuid primary,
+    author_id: uuid nullable,   // Post can exist without author
+    author: User nullable,
+}
+
+// ✗ Avoid - Don't make everything nullable
+entity User {
+    id: uuid primary,
+    email: string nullable,     // Bad: email should be required
+    name: string nullable,      // Bad: name should be required
+}
+```
+
+<Warning>
+Use `nullable` sparingly. Non-nullable fields make your domain model clearer and prevent many runtime errors.
+</Warning>
+
+## Default Values
+
+Specify default values for fields:
+
+<ParamField path="default" type="constraint">
+  Provides a default value when the field is not specified.
+  
+  **Syntax:**
+  ```go
+  fieldName: type default value
+  ```
+  
+  **Available defaults:**
+  - `now()` - Current timestamp (for `timestamp` fields)
+  - Literal values (strings, numbers, booleans)
+  
+  **Example:**
+  ```go
+  entity User {
+      id: uuid primary,
+      email: string,
+      created_at: timestamp default now(),  // Auto-set to current time
+      active: bool default true,            // Default to true (future)
+      role: string default "user",          // Default role (future)
+  }
+  ```
+  
+  **SQL Mapping:** `DEFAULT value`
+</ParamField>
+
+### Current Support (v1.0)
+
+<Note>
+Currently, only `default now()` is fully supported for timestamp fields. Additional default value types are planned for future releases.
+</Note>
+
+```go
+// ✓ Supported now
+entity Order {
+    id: uuid primary,
+    created_at: timestamp default now(),
+    updated_at: timestamp default now(),
+}
+
+// 🔮 Coming in future versions
+entity User {
+    active: bool default true,
+    role: string default "user",
+    score: int default 0,
+}
+```
+
+## Combining Constraints
+
+Constraints can be combined on a single field:
+
+```go
+entity User {
+    id: uuid primary,                      // primary only
+    email: string unique,                  // unique only
+    nickname: string unique nullable,      // unique + nullable
+    bio: string nullable,                  // nullable only
+    created_at: timestamp default now(),   // default only
+    deleted_at: timestamp nullable,        // nullable only
+}
+```
+
+### Constraint Order
+
+Constraints can appear in any order:
+
+```go
+// All equivalent:
+email: string unique nullable
+email: string nullable unique
+email: nullable unique string  // ✗ Type must come first
+```
+
+<Note>
+The field type must always come immediately after the colon (`:`). Constraints follow the type.
+</Note>
+
+## Complete Example
+
+Here's a complete schema demonstrating all constraints:
+
+```go
+entity User {
+    // Primary key (required, unique, non-null)
+    id: uuid primary,
+    
+    // Unique fields
+    email: string unique,
+    username: string unique,
+    
+    // Required fields (non-null by default)
+    name: string,
+    
+    // Optional fields
+    bio: string nullable,
+    age: int nullable,
+    avatar_url: string nullable,
+    
+    // Timestamps with defaults
+    created_at: timestamp default now(),
+    updated_at: timestamp default now(),
+    deleted_at: timestamp nullable,
+    
+    // Relations
+    orders: [Order] via user_id,
+}
+
+entity Order {
+    id: uuid primary,
+    total: decimal,
+    status: string,
+    
+    // Required foreign key
+    user_id: uuid,
+    user: User,
+    
+    // Optional foreign key
+    coupon_id: uuid nullable,
+    coupon: Coupon nullable,
+    
+    created_at: timestamp default now(),
+    items: [OrderItem] via order_id,
+}
+
+entity Coupon {
+    // String primary key
+    code: string primary,
+    discount: decimal,
+    expires_at: timestamp,
+    
+    orders: [Order] via coupon_id,
+}
+
+entity OrderItem {
+    id: uuid primary,
+    quantity: int,
+    price: decimal,
+    order_id: uuid,
+    
+    order: Order,
+}
+```
+
+## Validation Rules
+
+ChameleonDB enforces these validation rules:
+
+<Check>
+**Exactly One Primary Key** - Each entity must have exactly one `primary` field
+</Check>
+
+<Check>
+**Primary Keys Non-Nullable** - Primary keys cannot be `nullable`
+</Check>
+
+<Check>
+**Primary Keys Are Unique** - Primary keys are implicitly `unique`
+</Check>
+
+<Check>
+**Type Compatibility** - Default values must match the field type
+</Check>
+
+<Check>
+**Constraint Conflicts** - Constraints must not conflict (e.g., `primary nullable` is invalid)
+</Check>
+
+## Runtime Enforcement
+
+Constraints are enforced at runtime:
+
+```go
+// Unique constraint violation
+result, err := db.Insert("User").
+    Set("email", "ana@mail.com").
+    Execute(ctx)
+
+// If email already exists:
+// ❌ UniqueConstraintError: Field 'email' must be unique
+//    Value: ana@mail.com already exists
+```
+
+```go
+// NOT NULL constraint violation
+result, err := db.Insert("User").
+    Set("id", uuid.New()).
+    // Missing required 'email' field
+    Execute(ctx)
+
+// ❌ NotNullError: Field 'email' cannot be NULL
+```
+
+## Best Practices
+
+<Tip>
+**Use UUIDs for primary keys** - UUIDs prevent conflicts and are globally unique
+</Tip>
+
+<Tip>
+**Mark optional fields as nullable** - Be explicit about which fields can be empty
+</Tip>
+
+<Tip>
+**Use unique constraints for natural keys** - Email addresses, usernames, SKUs, etc.
+</Tip>
+
+<Tip>
+**Use default now() for timestamps** - Automatically track creation and update times
+</Tip>
+
+<Warning>
+**Avoid nullable on business-critical fields** - Required fields make your domain model clearer and prevent bugs.
+</Warning>
+
+## Common Patterns
+
+### Soft Deletes
+
+```go
+entity User {
+    id: uuid primary,
+    email: string unique,
+    deleted_at: timestamp nullable,  // NULL = not deleted
+}
+```
+
+### Audit Timestamps
+
+```go
+entity Post {
+    id: uuid primary,
+    title: string,
+    created_at: timestamp default now(),
+    updated_at: timestamp default now(),
+}
+```
+
+### Optional Relations
+
+```go
+entity Order {
+    id: uuid primary,
+    user_id: uuid nullable,     // Order can exist without user
+    user: User nullable,
+}
+```
+
+### Natural Keys
+
+```go
+entity Country {
+    code: string primary,       // "US", "UK" as primary key
+    name: string,
+}
+
+entity Product {
+    id: uuid primary,
+    sku: string unique,         // Business identifier
+    name: string,
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Field Types" icon="list" href="/schema/fields-types">
+    Learn about available field types
+  </Card>
+  <Card title="Annotations" icon="at" href="/schema/annotations">
+    Optimize with backend annotations
+  </Card>
+</CardGroup>

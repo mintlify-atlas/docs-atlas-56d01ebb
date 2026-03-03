@@ -1,0 +1,450 @@
+---
+title: Update Operations
+description: Safely modify existing records with WHERE clause requirements
+---
+
+## Overview
+
+Update operations in ChameleonDB modify existing records with built-in safety guards. **All updates require a WHERE clause** to prevent accidental full-table modifications.
+
+<Warning>
+**Safety First**: ChameleonDB requires a `Filter()` clause for all updates. Attempting to update without a filter will result in a `SafetyError`.
+
+This prevents catastrophic mistakes like:
+```go
+// This will FAIL (no WHERE clause)
+db.Update("User").
+    Set("name", "John").
+    Execute(ctx)
+
+// Error: SafetyError: UPDATE requires a WHERE clause
+//        Suggestion: Use Filter() or ForceUpdateAll()
+```
+</Warning>
+
+## Basic Update
+
+Update a single record by ID:
+
+```go
+import (
+    "context"
+    "github.com/chameleon-db/chameleondb/chameleon/pkg/engine"
+)
+
+ctx := context.Background()
+
+result, err := eng.Update("User").
+    Filter("id", "eq", userID).
+    Set("name", "Ana Martinez").
+    Execute(ctx)
+
+if err != nil {
+    log.Fatal(err)
+}
+
+fmt.Printf("Updated %d rows\n", result.Affected)
+```
+
+## Update Multiple Fields
+
+Chain multiple `.Set()` calls to update several fields:
+
+```go
+result, err := eng.Update("User").
+    Filter("id", "eq", userID).
+    Set("name", "Ana Martinez").
+    Set("email", "ana.martinez@mail.com").
+    Execute(ctx)
+```
+
+## Update with Complex Filters
+
+Use multiple filters to target specific records:
+
+```go
+// Update all unpublished posts by a specific author
+result, err := eng.Update("Post").
+    Filter("author_id", "eq", authorID).
+    Filter("published", "eq", false).
+    Set("published", true).
+    Execute(ctx)
+
+fmt.Printf("Published %d posts\n", result.Affected)
+```
+
+## Conditional Updates
+
+Update records based on date ranges or other conditions:
+
+```go
+// Update old posts created before a certain date
+result, err := eng.Update("Post").
+    Filter("created_at", "lt", "2024-01-01").
+    Set("archived", true).
+    Execute(ctx)
+```
+
+## Full-Table Updates (Use with Caution)
+
+If you genuinely need to update all records in a table, use `ForceUpdateAll()`:
+
+```go
+import "github.com/chameleon-db/chameleondb/chameleon/pkg/engine"
+
+// Update ALL users (requires explicit confirmation)
+result, err := eng.Update("User").
+    Set("notification_enabled", true).
+    ForceUpdateAll(). // Explicitly bypass safety check
+    Execute(ctx)
+
+if err != nil {
+    log.Fatal(err)
+}
+
+fmt.Printf("Updated all %d users\n", result.Affected)
+```
+
+<Warning>
+**Dangerous Operation**: `ForceUpdateAll()` bypasses the safety guard and updates **every record** in the table. Use this only when absolutely necessary and ensure you:
+
+- Understand the impact
+- Have backups in place
+- Are in the correct environment (not production)
+- Have tested the operation first
+</Warning>
+
+## Update Result
+
+The `UpdateResult` type provides information about the operation:
+
+```go
+type UpdateResult struct {
+    Affected int // Number of rows modified
+}
+
+result, err := eng.Update("User").
+    Filter("email", "eq", "old@mail.com").
+    Set("email", "new@mail.com").
+    Execute(ctx)
+
+if err != nil {
+    log.Fatal(err)
+}
+
+if result.Affected == 0 {
+    fmt.Println("No records matched the filter")
+} else {
+    fmt.Printf("Updated %d record(s)\n", result.Affected)
+}
+```
+
+## Error Handling
+
+Handle common update errors:
+
+```go
+import "errors"
+
+result, err := eng.Update("User").
+    Filter("id", "eq", userID).
+    Set("email", "ana@mail.com").
+    Execute(ctx)
+
+if err != nil {
+    var uniqueErr *engine.UniqueConstraintError
+    if errors.As(err, &uniqueErr) {
+        // Email already taken by another user
+        return fmt.Errorf("email already in use: %w", err)
+    }
+    
+    var safetyErr *engine.SafetyError
+    if errors.As(err, &safetyErr) {
+        // Missing WHERE clause
+        return fmt.Errorf("update requires filter: %w", err)
+    }
+    
+    return fmt.Errorf("update failed: %w", err)
+}
+```
+
+## Debug Mode
+
+Inspect generated SQL with `.Debug()`:
+
+```go
+result, err := eng.Update("User").
+    Filter("id", "eq", userID).
+    Set("name", "Ana").
+    Debug(). // Shows SQL and arguments
+    Execute(ctx)
+
+// Output:
+// [SQL] Update User
+// UPDATE users SET name = $1 WHERE id = $2
+// [ARGS] [Ana, 550e8400-e29b-41d4-a716-446655440000]
+// [TRACE] Update on User: 1.2ms, 1 rows affected
+```
+
+## Repository Pattern
+
+Recommended pattern for encapsulating update logic:
+
+```go
+package repository
+
+import (
+    "context"
+    "github.com/chameleon-db/chameleondb/chameleon/pkg/engine"
+)
+
+type UserRepository struct {
+    eng *engine.Engine
+}
+
+func (r *UserRepository) UpdateName(ctx context.Context, id, name string) (*engine.UpdateResult, error) {
+    return r.eng.Update("User").
+        Filter("id", "eq", id).
+        Set("name", name).
+        Execute(ctx)
+}
+
+func (r *UserRepository) UpdateEmail(ctx context.Context, id, email string) (*engine.UpdateResult, error) {
+    return r.eng.Update("User").
+        Filter("id", "eq", id).
+        Set("email", email).
+        Execute(ctx)
+}
+
+func (r *UserRepository) PublishPost(ctx context.Context, postID string) (*engine.UpdateResult, error) {
+    return r.eng.Update("Post").
+        Filter("id", "eq", postID).
+        Set("published", true).
+        Execute(ctx)
+}
+```
+
+## Best Practices
+
+### Always Use Specific Filters
+
+```go
+// Good: Update specific record by ID
+eng.Update("User").
+    Filter("id", "eq", userID).
+    Set("name", "Ana").
+    Execute(ctx)
+
+// Good: Update multiple records with clear criteria
+eng.Update("Post").
+    Filter("author_id", "eq", authorID).
+    Filter("status", "eq", "draft").
+    Set("status", "review").
+    Execute(ctx)
+
+// Bad: Don't use ForceUpdateAll() without strong justification
+eng.Update("User").
+    Set("active", true).
+    ForceUpdateAll(). // Affects ALL users!
+    Execute(ctx)
+```
+
+### Check Affected Rows
+
+```go
+result, err := eng.Update("User").
+    Filter("id", "eq", userID).
+    Set("name", "Ana").
+    Execute(ctx)
+
+if err != nil {
+    return err
+}
+
+if result.Affected == 0 {
+    return fmt.Errorf("user not found: %s", userID)
+}
+
+if result.Affected > 1 {
+    log.Printf("Warning: Updated %d users (expected 1)", result.Affected)
+}
+```
+
+### Validate Before Update
+
+```go
+func (r *UserRepository) UpdateEmail(ctx context.Context, id, email string) error {
+    // Validate email format
+    if !isValidEmail(email) {
+        return fmt.Errorf("invalid email format")
+    }
+    
+    // Perform update
+    result, err := r.eng.Update("User").
+        Filter("id", "eq", id).
+        Set("email", email).
+        Execute(ctx)
+    
+    if err != nil {
+        return err
+    }
+    
+    if result.Affected == 0 {
+        return fmt.Errorf("user not found")
+    }
+    
+    return nil
+}
+```
+
+### Use Transactions for Multiple Updates
+
+```go
+// Coming in v1.1
+tx, err := eng.BeginTransaction(ctx)
+if err != nil {
+    return err
+}
+defer tx.Rollback()
+
+// Update user
+_, err = tx.Update("User").
+    Filter("id", "eq", userID).
+    Set("status", "premium").
+    Execute(ctx)
+if err != nil {
+    return err
+}
+
+// Update all user's posts
+_, err = tx.Update("Post").
+    Filter("author_id", "eq", userID).
+    Set("premium_content", true).
+    Execute(ctx)
+if err != nil {
+    return err
+}
+
+tx.Commit()
+```
+
+## Common Patterns
+
+### Toggle Boolean Fields
+
+```go
+// Publish a post
+eng.Update("Post").
+    Filter("id", "eq", postID).
+    Set("published", true).
+    Execute(ctx)
+
+// Unpublish a post
+eng.Update("Post").
+    Filter("id", "eq", postID).
+    Set("published", false).
+    Execute(ctx)
+```
+
+### Bulk Status Updates
+
+```go
+// Mark all old drafts as archived
+result, err := eng.Update("Post").
+    Filter("status", "eq", "draft").
+    Filter("created_at", "lt", "2023-01-01").
+    Set("status", "archived").
+    Execute(ctx)
+
+fmt.Printf("Archived %d old drafts\n", result.Affected)
+```
+
+### Partial Updates
+
+```go
+// Update only if fields are provided
+func (r *UserRepository) UpdateProfile(ctx context.Context, id string, name, email *string) error {
+    update := r.eng.Update("User").Filter("id", "eq", id)
+    
+    if name != nil {
+        update = update.Set("name", *name)
+    }
+    
+    if email != nil {
+        update = update.Set("email", *email)
+    }
+    
+    result, err := update.Execute(ctx)
+    if err != nil {
+        return err
+    }
+    
+    if result.Affected == 0 {
+        return fmt.Errorf("user not found")
+    }
+    
+    return nil
+}
+```
+
+## HTTP Handler Example
+
+```go
+import "net/http"
+
+func updateUserHandler(w http.ResponseWriter, r *http.Request) {
+    userID := r.URL.Query().Get("id")
+    
+    var req struct {
+        Name  string `json:"name"`
+        Email string `json:"email"`
+    }
+    
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        http.Error(w, "Invalid request", http.StatusBadRequest)
+        return
+    }
+    
+    result, err := eng.Update("User").
+        Filter("id", "eq", userID).
+        Set("name", req.Name).
+        Set("email", req.Email).
+        Execute(r.Context())
+    
+    if err != nil {
+        var uniqueErr *engine.UniqueConstraintError
+        if errors.As(err, &uniqueErr) {
+            http.Error(w, "Email already in use", http.StatusConflict)
+            return
+        }
+        
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
+    
+    if result.Affected == 0 {
+        http.Error(w, "User not found", http.StatusNotFound)
+        return
+    }
+    
+    w.WriteHeader(http.StatusOK)
+    json.NewEncoder(w).Encode(map[string]int{"affected": result.Affected})
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Delete Operations" icon="trash" href="/mutations/delete">
+    Remove records safely with WHERE clause requirements
+  </Card>
+  <Card title="Safety Guards" icon="shield" href="/mutations/safety">
+    Learn about ChameleonDB's mutation safety features
+  </Card>
+  <Card title="Insert Operations" icon="plus" href="/mutations/insert">
+    Create new records with validation
+  </Card>
+  <Card title="Error Handling" icon="triangle-exclamation" href="/api/error-handling">
+    Complete error handling reference
+  </Card>
+</CardGroup>

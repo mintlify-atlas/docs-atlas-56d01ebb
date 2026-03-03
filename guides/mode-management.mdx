@@ -1,0 +1,464 @@
+---
+title: Managing Integrity Modes
+description: Control schema change permissions with ChameleonDB's ring-based governance system
+---
+
+Integrity Modes provide Unix-style protection rings for schema governance, enabling explicit control over who can modify schemas and when.
+
+## Overview
+
+ChameleonDB enforces schema changes through **four integrity modes**, each with different permission levels:
+
+| Mode | Ring | Use Case | Schema Changes | Password Required |
+|------|------|----------|----------------|-------------------|
+| **readonly** | R3 | Production (default) | ❌ Blocked | To upgrade |
+| **standard** | R2 | Development teams | ✅ Controlled | To upgrade |
+| **privileged** | R1 | DBAs | ✅ Direct (logged) | To upgrade |
+| **emergency** | R0 | Incident recovery | ✅ No checks (audited) | To upgrade |
+
+<Info>
+**Mode upgrades** (e.g., `readonly` → `standard`) **require password authentication**.
+
+**Mode downgrades** (e.g., `standard` → `readonly`) **do NOT require password**.
+</Info>
+
+## Mode Descriptions
+
+### readonly (R3) — Production Default
+
+**Purpose:** Lock schema changes in production environments.
+
+**Behavior:**
+- ❌ Migrations blocked
+- ❌ Introspection blocked
+- ✅ Queries allowed
+- ✅ Reads from Schema Vault
+
+**Use case:** Production databases where schema changes should never happen without explicit authorization.
+
+```bash
+# Attempt migration in readonly mode
+$ chameleon migrate --apply
+❌ readonly mode: schema modifications blocked
+💡 Upgrade mode: chameleon config set mode=standard
+```
+
+### standard (R2) — Development Teams
+
+**Purpose:** Allow controlled schema changes for development workflows.
+
+**Behavior:**
+- ✅ Migrations allowed (with vault registration)
+- ✅ Introspection allowed
+- ✅ Full audit trail
+- ✅ Integrity verification enforced
+
+**Use case:** Development and staging environments where teams actively iterate on schemas.
+
+```bash
+# Migrations work in standard mode
+$ chameleon migrate --apply
+✅ Schema v002 registered and applied
+```
+
+### privileged (R1) — Database Administrators
+
+**Purpose:** Direct database access with comprehensive logging.
+
+**Behavior:**
+- ✅ All standard operations
+- ✅ Direct SQL execution (logged)
+- ✅ Advanced recovery operations
+
+**Use case:** DBAs who need direct database access while maintaining audit compliance.
+
+<Warning>
+Privileged mode is planned for v1.1. In v1.0, use standard mode for DBA workflows.
+</Warning>
+
+### emergency (R0) — Incident Recovery
+
+**Purpose:** Critical incident recovery with minimal checks.
+
+**Behavior:**
+- ✅ All operations allowed
+- ⚠️ Integrity checks skipped
+- 📝 All actions heavily audited
+
+**Use case:** Production outages requiring immediate schema fixes.
+
+<Warning>
+Emergency mode is planned for v1.1. In v1.0, use privileged mode with caution.
+</Warning>
+
+## Password Protection
+
+### Setting a Mode Password
+
+Set a password to protect mode upgrades:
+
+```bash
+chameleon config auth set-password
+```
+
+**Interactive prompt:**
+```
+Enter new password: ********
+Confirm password: ********
+✅ Mode password configured
+```
+
+<Tip>
+Set a mode password immediately after initializing your project to secure schema changes.
+</Tip>
+
+### Password Storage
+
+Passwords are stored securely in:
+```
+.chameleon/vault/auth/password.hash
+```
+
+- Hashed using bcrypt
+- Never stored in plaintext
+- Protected by OS file permissions (0600)
+
+<Warning>
+Add `.chameleon/` to `.gitignore` to prevent committing passwords to version control.
+</Warning>
+
+## Mode Management Workflow
+
+### Check Current Mode
+
+View your current integrity mode:
+
+```bash
+chameleon config get mode
+```
+
+**Output:**
+```
+Current mode: readonly
+```
+
+Or use `status` for comprehensive info:
+
+```bash
+chameleon status
+```
+
+**Output:**
+```
+Schema:
+  Current version:  v001
+  Status:          ✓ Up to date
+
+Vault:
+  Versions:        1 registered
+  Integrity:       ✓ OK
+  Mode:            🔒 readonly (locked)
+```
+
+### Upgrade Mode (Requires Password)
+
+Upgrading to a higher ring requires password authentication:
+
+<Steps>
+  <Step title="Set Password (First Time Only)">
+    ```bash
+    chameleon config auth set-password
+    Enter new password: ********
+    ✅ Mode password configured
+    ```
+  </Step>
+
+  <Step title="Upgrade Mode">
+    ```bash
+    chameleon config set mode=standard
+    ```
+
+    **Interactive prompt:**
+    ```
+    🔐 Enter mode password: ****
+    ✅ Mode upgraded to standard
+    ```
+  </Step>
+
+  <Step title="Verify Mode Change">
+    ```bash
+    chameleon config get mode
+    ```
+
+    **Output:**
+    ```
+    Current mode: standard
+    ```
+  </Step>
+</Steps>
+
+### Downgrade Mode (No Password Required)
+
+Downgrading to a lower ring does NOT require password:
+
+```bash
+chameleon config set mode=readonly
+```
+
+**Output:**
+```
+✅ Mode downgraded to readonly
+💡 Schema modifications now blocked
+```
+
+<Info>
+Downgrades are intentionally password-free to make it easy to lock down production environments.
+</Info>
+
+## Complete Examples
+
+### Development Workflow
+
+```bash
+# Initialize project (defaults to readonly)
+chameleon init
+✅ Vault initialized in readonly mode
+
+# Set password for future upgrades
+chameleon config auth set-password
+Enter new password: ********
+✅ Mode password configured
+
+# Upgrade to standard for development
+chameleon config set mode=standard
+🔐 Enter mode password: ****
+✅ Mode upgraded to standard
+
+# Now you can run migrations
+chameleon migrate --apply
+✅ Schema v001 registered and applied
+
+# Lock down when deploying to production
+chameleon config set mode=readonly
+✅ Mode downgraded to readonly
+```
+
+### Production Deployment
+
+```bash
+# Production should always start in readonly
+chameleon init
+✅ Vault initialized in readonly mode
+
+# Set strong password
+chameleon config auth set-password
+Enter new password: ********
+✅ Mode password configured
+
+# Verify mode is readonly
+chameleon status
+Mode: 🔒 readonly (locked)
+
+# Any migration attempts will fail
+chameleon migrate --apply
+❌ readonly mode: schema modifications blocked
+```
+
+### Authorized Schema Change in Production
+
+```bash
+# 1. Verify current state
+chameleon status
+Mode: 🔒 readonly (locked)
+
+# 2. Upgrade with authorization
+chameleon config set mode=standard
+🔐 Enter mode password: ****
+✅ Mode upgraded to standard
+
+# 3. Apply migration
+chameleon migrate --apply
+✅ Schema v002 registered and applied
+
+# 4. Immediately lock back down
+chameleon config set mode=readonly
+✅ Mode downgraded to readonly
+
+# 5. Verify in audit log
+cat .chameleon/vault/integrity.log
+```
+
+## Audit Trail
+
+All mode changes are logged in the integrity log:
+
+```bash
+cat .chameleon/vault/integrity.log
+```
+
+**Example log entries:**
+```
+2026-03-03T10:30:00Z [MODE] readonly → standard (user: dperalta)
+2026-03-03T10:35:00Z [MIGRATE] v001 → v002 (mode: standard)
+2026-03-03T10:36:00Z [MODE] standard → readonly (user: dperalta)
+```
+
+## Mode Enforcement
+
+### Operations Blocked in readonly Mode
+
+| Operation | Command | Behavior |
+|-----------|---------|----------|
+| Migration | `chameleon migrate --apply` | ❌ Blocked |
+| Introspection | `chameleon introspect` | ❌ Blocked |
+| Validation | `chameleon validate` | ✅ Allowed |
+| Status check | `chameleon status` | ✅ Allowed |
+| Verify integrity | `chameleon verify` | ✅ Allowed |
+
+### Operations Allowed in standard Mode
+
+| Operation | Command | Behavior |
+|-----------|---------|----------|
+| Migration | `chameleon migrate --apply` | ✅ Allowed (with vault registration) |
+| Introspection | `chameleon introspect` | ✅ Allowed |
+| All readonly ops | - | ✅ Allowed |
+
+## Common Workflows
+
+### Local Development
+
+```bash
+# Start in standard mode for active development
+chameleon config set mode=standard
+
+# Iterate freely
+chameleon migrate --apply
+# ... make changes ...
+chameleon migrate --apply
+```
+
+### CI/CD Pipeline
+
+```bash
+# In CI: upgrade temporarily, then lock down
+chameleon config set mode=standard <<< "$MODE_PASSWORD"
+chameleon migrate --apply
+chameleon config set mode=readonly
+```
+
+### Staging Environment
+
+```bash
+# Staging mirrors production: readonly by default
+chameleon config set mode=readonly
+
+# Upgrade only for authorized deployments
+chameleon config set mode=standard
+chameleon migrate --apply
+chameleon config set mode=readonly
+```
+
+## Security Best Practices
+
+<AccordionGroup>
+  <Accordion title="Set password immediately">
+    Configure a mode password right after initializing:
+    ```bash
+    chameleon init
+    chameleon config auth set-password
+    ```
+  </Accordion>
+
+  <Accordion title="Use readonly in production">
+    Always deploy production with readonly mode:
+    ```bash
+    chameleon config set mode=readonly
+    ```
+  </Accordion>
+
+  <Accordion title="Minimize time in elevated modes">
+    Upgrade, apply changes, then immediately downgrade:
+    ```bash
+    chameleon config set mode=standard
+    chameleon migrate --apply
+    chameleon config set mode=readonly  # ← Do this immediately
+    ```
+  </Accordion>
+
+  <Accordion title="Audit mode changes regularly">
+    Review integrity log for unauthorized access:
+    ```bash
+    cat .chameleon/vault/integrity.log | grep MODE
+    ```
+  </Accordion>
+
+  <Accordion title="Secure password storage">
+    Never commit passwords to version control:
+    ```bash
+    echo ".chameleon/" >> .gitignore
+    ```
+  </Accordion>
+
+  <Accordion title="Use environment variables in CI/CD">
+    Pass passwords securely via encrypted secrets:
+    ```bash
+    echo "$MODE_PASSWORD" | chameleon config set mode=standard
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Common Issues
+
+### "mode password not set"
+
+**Solution:** Set password first:
+
+```bash
+chameleon config auth set-password
+```
+
+### "invalid password"
+
+**Solution:** Re-enter correct password or reset:
+
+```bash
+chameleon config auth set-password
+```
+
+### "readonly mode: blocked"
+
+**Solution:** Upgrade mode with password:
+
+```bash
+chameleon config set mode=standard
+```
+
+### Forgot password
+
+**Solution:** Reset password file (loses protection):
+
+```bash
+rm .chameleon/vault/auth/password.hash
+chameleon config auth set-password
+```
+
+<Warning>
+Deleting the password hash removes mode protection. Only do this if you have proper authorization.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Migration Workflow" icon="code-merge" href="/guides/migrations">
+    Apply schema changes with proper modes
+  </Card>
+  <Card title="Introspection" icon="database" href="/guides/introspection">
+    Generate schemas (requires standard mode)
+  </Card>
+  <Card title="Security Model" icon="shield-halved" href="/core-concepts/security">
+    Complete security architecture
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/core-concepts/architecture">
+    Understand the integrity system
+  </Card>
+</CardGroup>

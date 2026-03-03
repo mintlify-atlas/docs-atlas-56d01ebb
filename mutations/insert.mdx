@@ -1,0 +1,321 @@
+---
+title: Insert Operations
+description: Create new records with validation and type safety
+---
+
+## Overview
+
+Insert operations in ChameleonDB provide a safe, validated way to create new records in your database. All inserts go through a three-stage validation pipeline to ensure data integrity.
+
+## Basic Insert
+
+The simplest insert requires setting values for all required fields:
+
+```go
+import (
+    "context"
+    "github.com/chameleon-db/chameleondb/chameleon/pkg/engine"
+    "github.com/google/uuid"
+)
+
+ctx := context.Background()
+
+result, err := eng.Insert("User").
+    Set("id", uuid.New().String()).
+    Set("email", "ana@mail.com").
+    Set("name", "Ana Garcia").
+    Execute(ctx)
+
+if err != nil {
+    log.Fatal(err)
+}
+
+fmt.Printf("User created: %v\n", result.ID)
+```
+
+## Insert with Default Values
+
+Fields with defaults in your schema don't need to be set:
+
+```go
+// Schema defines: created_at: timestamp default now()
+result, err := eng.Insert("Post").
+    Set("id", uuid.New().String()).
+    Set("title", "My First Post").
+    Set("content", "Hello, world!").
+    Set("author_id", userID).
+    // published defaults to false
+    // created_at defaults to now()
+    Execute(ctx)
+```
+
+## Validation Pipeline
+
+Every insert goes through three validation stages:
+
+### 1. Schema Validation
+
+Verifies that:
+- Entity exists in schema
+- All fields are defined
+- Types match schema definitions
+
+```go
+result, err := eng.Insert("User").
+    Set("id", uuid.New().String()).
+    Set("email", 12345). // Wrong type!
+    Execute(ctx)
+
+// Error: Type mismatch: field 'email' expects string, got int
+```
+
+### 2. Constraint Validation
+
+Enforces:
+- NOT NULL constraints
+- UNIQUE constraints
+- Field presence requirements
+
+```go
+result, err := eng.Insert("User").
+    Set("id", uuid.New().String()).
+    Set("email", "ana@mail.com").
+    // Missing required field 'name'
+    Execute(ctx)
+
+// Error: NotNullError: Field 'name' cannot be null
+```
+
+### 3. Database Validation
+
+Final checks at database level:
+- Foreign key constraints
+- Unique constraint violations
+- Database-specific rules
+
+```go
+result, err := eng.Insert("User").
+    Set("id", uuid.New().String()).
+    Set("email", "ana@mail.com"). // Email already exists
+    Set("name", "Ana").
+    Execute(ctx)
+
+// Error: UniqueConstraintError: Field 'email' must be unique
+//        Value: ana@mail.com already exists
+//        Suggestion: Use a different value or update the existing record
+```
+
+## Error Handling
+
+ChameleonDB provides typed errors for precise error handling:
+
+```go
+import "errors"
+
+result, err := eng.Insert("User").
+    Set("id", uuid.New().String()).
+    Set("email", "ana@mail.com").
+    Set("name", "Ana").
+    Execute(ctx)
+
+if err != nil {
+    var uniqueErr *engine.UniqueConstraintError
+    if errors.As(err, &uniqueErr) {
+        // Handle duplicate entry
+        return fmt.Errorf("email already registered: %w", err)
+    }
+    
+    var fkErr *engine.ForeignKeyError
+    if errors.As(err, &fkErr) {
+        // Handle invalid reference
+        return fmt.Errorf("invalid reference: %w", err)
+    }
+    
+    var notNullErr *engine.NotNullError
+    if errors.As(err, &notNullErr) {
+        // Handle missing required field
+        return fmt.Errorf("missing required field: %w", err)
+    }
+    
+    // Unknown error
+    return fmt.Errorf("insert failed: %w", err)
+}
+```
+
+## Insert with Relations
+
+When inserting records with foreign keys, ensure parent records exist:
+
+```go
+// First, create the user
+userResult, err := eng.Insert("User").
+    Set("id", uuid.New().String()).
+    Set("email", "ana@mail.com").
+    Set("name", "Ana").
+    Execute(ctx)
+
+if err != nil {
+    log.Fatal(err)
+}
+
+// Then create posts referencing the user
+postResult, err := eng.Insert("Post").
+    Set("id", uuid.New().String()).
+    Set("title", "First Post").
+    Set("content", "Hello, world!").
+    Set("author_id", userResult.ID). // Reference to User
+    Execute(ctx)
+
+if err != nil {
+    log.Fatal(err)
+}
+```
+
+<Warning>
+If you try to insert a record with an invalid foreign key reference, you'll get a `ForeignKeyError`:
+
+```go
+result, err := eng.Insert("Post").
+    Set("id", uuid.New().String()).
+    Set("title", "Orphan Post").
+    Set("author_id", "invalid-uuid"). // User doesn't exist
+    Execute(ctx)
+
+// Error: ForeignKeyError: Invalid reference
+//        Field 'author_id' references non-existent User
+```
+</Warning>
+
+## Debug Mode
+
+Use `.Debug()` to see the generated SQL:
+
+```go
+result, err := eng.Insert("User").
+    Set("id", uuid.New().String()).
+    Set("email", "ana@mail.com").
+    Set("name", "Ana").
+    Debug(). // Shows SQL
+    Execute(ctx)
+
+// Output:
+// [SQL] Insert User
+// INSERT INTO users (id, email, name) VALUES ($1, $2, $3)
+// [ARGS] [550e8400-e29b-41d4-a716-446655440000, ana@mail.com, Ana]
+```
+
+## Repository Pattern
+
+Recommended pattern for production applications:
+
+```go
+package repository
+
+import (
+    "context"
+    "github.com/chameleon-db/chameleondb/chameleon/pkg/engine"
+    "github.com/google/uuid"
+)
+
+type UserRepository struct {
+    eng *engine.Engine
+}
+
+func NewUserRepository(eng *engine.Engine) *UserRepository {
+    return &UserRepository{eng: eng}
+}
+
+func (r *UserRepository) Create(ctx context.Context, email, name string) (*engine.InsertResult, error) {
+    return r.eng.Insert("User").
+        Set("id", uuid.New().String()).
+        Set("email", email).
+        Set("name", name).
+        Execute(ctx)
+}
+```
+
+## Best Practices
+
+### Always Generate UUIDs
+
+```go
+import "github.com/google/uuid"
+
+// Good: Generate UUID in application
+result, err := eng.Insert("User").
+    Set("id", uuid.New().String()).
+    Set("email", "ana@mail.com").
+    Set("name", "Ana").
+    Execute(ctx)
+
+// Bad: Don't rely on database to generate IDs
+result, err := eng.Insert("User").
+    Set("email", "ana@mail.com").
+    Set("name", "Ana").
+    Execute(ctx) // Missing 'id' will cause NotNullError
+```
+
+### Validate Before Insert
+
+```go
+func (r *UserRepository) Create(ctx context.Context, email, name string) error {
+    // Validate email format
+    if !isValidEmail(email) {
+        return fmt.Errorf("invalid email format")
+    }
+    
+    // Validate name length
+    if len(name) < 2 {
+        return fmt.Errorf("name too short")
+    }
+    
+    // Perform insert
+    _, err := r.eng.Insert("User").
+        Set("id", uuid.New().String()).
+        Set("email", email).
+        Set("name", name).
+        Execute(ctx)
+    
+    return err
+}
+```
+
+### Handle Errors Gracefully
+
+```go
+import "net/http"
+
+func createUserHandler(w http.ResponseWriter, r *http.Request) {
+    result, err := repo.Create(r.Context(), email, name)
+    if err != nil {
+        var uniqueErr *engine.UniqueConstraintError
+        if errors.As(err, &uniqueErr) {
+            http.Error(w, "Email already registered", http.StatusConflict)
+            return
+        }
+        
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
+    
+    w.WriteHeader(http.StatusCreated)
+    json.NewEncoder(w).Encode(result)
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Update Operations" icon="pen" href="/mutations/update">
+    Learn how to safely update existing records
+  </Card>
+  <Card title="Delete Operations" icon="trash" href="/mutations/delete">
+    Remove records with safety guards
+  </Card>
+  <Card title="Safety Guards" icon="shield" href="/mutations/safety">
+    Understand ChameleonDB's mutation safety features
+  </Card>
+  <Card title="Error Handling" icon="triangle-exclamation" href="/api/error-handling">
+    Complete error handling reference
+  </Card>
+</CardGroup>

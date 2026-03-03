@@ -1,0 +1,422 @@
+---
+title: 'Mode Enforcement'
+description: 'Ring-based access control with password-protected mode upgrades'
+---
+
+ChameleonDB uses **Integrity Modes** to control schema modifications through a Unix-style protection ring system.
+
+## The 4 Integrity Modes
+
+| Mode | Ring | Use Case | Schema Changes |
+|------|------|----------|----------------|
+| **readonly** | R3 | Production (default) | ❌ Blocked |
+| **standard** | R2 | Development teams | ✅ Controlled |
+| **privileged** | R1 | DBAs | ✅ Direct (logged) |
+| **emergency** | R0 | Incident recovery | ✅ No checks (audited) |
+
+<Info>
+Modes are inspired by CPU protection rings (Ring 0-3), where higher numbers = more restrictions.
+</Info>
+
+## Mode Details
+
+### readonly (R3) - Production Default
+
+**Purpose:** Lock schemas in production to prevent accidental changes.
+
+**Permissions:**
+- ❌ Schema migrations blocked
+- ✅ Read-only operations allowed
+- ✅ Query execution
+- ✅ Data mutations (INSERT/UPDATE/DELETE)
+
+**Example:**
+```bash
+# Try to migrate in readonly mode
+chameleon migrate --apply
+
+❌ readonly mode: schema modifications blocked
+💡 Upgrade to standard mode: chameleon config set mode=standard
+```
+
+<Warning>
+**This is the recommended mode for production environments.** Schema changes should go through proper change management processes.
+</Warning>
+
+### standard (R2) - Development Teams
+
+**Purpose:** Allow controlled schema changes during development.
+
+**Permissions:**
+- ✅ Schema migrations allowed (with validation)
+- ✅ Migration preview (dry-run)
+- ✅ Schema validation
+- ✅ All operations logged
+
+**Example:**
+```bash
+# Upgrade to standard mode
+chameleon config set mode=standard
+🔐 Enter mode password: ****
+✅ Mode upgraded to standard
+
+# Now migrations work
+chameleon migrate --apply
+✅ Migration applied successfully
+✅ Schema v002 registered and locked
+```
+
+<Note>
+**Recommended for development and staging environments** where teams need to iterate on schemas.
+</Note>
+
+### privileged (R1) - Database Administrators
+
+**Purpose:** Direct schema access for DBAs with full logging.
+
+**Permissions:**
+- ✅ Direct SQL execution
+- ✅ Bypass certain safety checks
+- ✅ Manual schema registration
+- ✅ All operations audited
+
+**Example:**
+```bash
+# Upgrade to privileged mode
+chameleon config set mode=privileged
+🔐 Enter mode password: ****
+✅ Mode upgraded to privileged
+
+# Execute direct SQL (logged)
+chameleon exec "ALTER TABLE users ADD COLUMN admin BOOLEAN DEFAULT FALSE"
+⚠️  Direct SQL in privileged mode
+✅ Executed successfully
+📝 Logged to audit trail
+```
+
+<Warning>
+**Use sparingly.** Only for experienced DBAs who need direct database access. All operations are logged for audit.
+</Warning>
+
+### emergency (R0) - Incident Recovery
+
+**Purpose:** Unrestricted access for emergency situations.
+
+**Permissions:**
+- ✅ Skip integrity checks
+- ✅ Force migrations
+- ✅ Bypass all safety guards
+- ✅ Complete audit trail
+
+**Example:**
+```bash
+# Upgrade to emergency mode
+chameleon config set mode=emergency
+🔐 Enter mode password: ****
+⚠️  WARNING: Emergency mode bypasses all safety checks
+✅ Mode upgraded to emergency
+
+# Force migration without checks
+chameleon migrate --apply --force
+⚠️  EMERGENCY: Skipping integrity verification
+⚠️  EMERGENCY: Skipping migration validation
+✅ Migration forced
+📝 Emergency operation logged
+```
+
+<Warning>
+**Use ONLY during incidents.** This mode bypasses all safety mechanisms. Every action is fully audited.
+</Warning>
+
+## Mode Upgrades & Downgrades
+
+### Password Protection
+
+Mode **upgrades** (lower ring → higher privilege) require password authentication:
+
+```bash
+# Set password (do this first)
+chameleon config auth set-password
+
+Enter new password: ********
+Confirm password: ********
+✅ Mode password configured
+```
+
+**Password is stored:**
+```
+.chameleon/vault/auth/mode.key  # Hashed password
+```
+
+<Warning>
+Set file permissions: `chmod 600 .chameleon/vault/auth/mode.key`
+</Warning>
+
+### Upgrade Mode (Requires Password)
+
+```bash
+# readonly → standard
+chameleon config set mode=standard
+🔐 Enter mode password: ****
+✅ Mode upgraded to standard
+
+# standard → privileged
+chameleon config set mode=privileged
+🔐 Enter mode password: ****
+✅ Mode upgraded to privileged
+
+# privileged → emergency
+chameleon config set mode=emergency
+🔐 Enter mode password: ****
+⚠️  WARNING: Emergency mode bypasses all safety checks
+✅ Mode upgraded to emergency
+```
+
+### Downgrade Mode (No Password)
+
+Mode **downgrades** (higher privilege → lower ring) don't require a password:
+
+```bash
+# emergency → readonly (no password)
+chameleon config set mode=readonly
+✅ Mode downgraded to readonly
+
+# privileged → standard (no password)
+chameleon config set mode=standard
+✅ Mode downgraded to standard
+```
+
+<Info>
+Downgrades are unrestricted because they **increase** security, not decrease it.
+</Info>
+
+## Mode Enforcement Flow
+
+```
+User: chameleon migrate --apply
+          ↓
+1. Load current mode from vault
+          ↓
+2. Check if operation allowed
+          ↓
+   readonly?  → BLOCK (error)
+   standard?  → ALLOW (with validation)
+   privileged? → ALLOW (direct)
+   emergency? → ALLOW (skip checks)
+          ↓
+3. Log operation to integrity.log
+          ↓
+4. Execute operation
+          ↓
+5. Record in audit trail
+```
+
+## Checking Current Mode
+
+### Quick Check
+
+```bash
+chameleon config get mode
+
+Current mode: readonly
+```
+
+### Detailed Status
+
+```bash
+chameleon status
+
+Schema:
+  Current version:  v002
+  Status:          ✓ Up to date
+
+Vault:
+  Versions:        2 registered
+  Integrity:       ✓ OK
+  Mode:            🔒 readonly (locked)
+  Password:        ✓ Configured
+```
+
+## Mode Change Logging
+
+All mode changes are logged to `integrity.log`:
+
+```
+2026-02-23T15:45:00Z [MODE_CHANGE] from=readonly to=standard type=upgrade user=dperalta
+2026-02-23T16:30:00Z [MODE_CHANGE] from=standard to=readonly type=downgrade user=dperalta
+2026-02-24T10:15:00Z [MODE_CHANGE] from=readonly to=privileged type=upgrade user=admin
+```
+
+**Log fields:**
+- `from` - Previous mode
+- `to` - New mode
+- `type` - upgrade or downgrade
+- `user` - Who made the change (from OS username)
+
+## Password Management
+
+### Set Password
+
+```bash
+chameleon config auth set-password
+
+Enter new password: ********
+Confirm password: ********
+✅ Mode password configured
+```
+
+### Change Password
+
+```bash
+chameleon config auth set-password
+
+Enter current password: ********
+Enter new password: ********
+Confirm new password: ********
+✅ Mode password updated
+```
+
+### Use Environment Variable (CI/CD)
+
+```bash
+# Set password via environment
+export CHAMELEON_MODE_PASSWORD="strong-password"
+
+# Upgrade without prompt
+chameleon config set mode=standard
+✅ Mode upgraded to standard (using env password)
+```
+
+<Warning>
+**Never commit passwords to version control.** Use environment variables or secret management tools.
+</Warning>
+
+## Mode Strategy by Environment
+
+### Development
+
+```yaml
+Mode: standard
+Rationale: Developers need to iterate on schemas
+Password: Team shared (stored in password manager)
+Monitoring: Basic logging
+```
+
+### Staging
+
+```yaml
+Mode: readonly
+Rationale: Verify migrations before production
+Password: DevOps team only
+Monitoring: Alert on mode changes
+```
+
+### Production
+
+```yaml
+Mode: readonly
+Rationale: Prevent accidental schema changes
+Password: DBA team only (rotated regularly)
+Monitoring: Alert on ANY mode change
+Process: Change requests required for upgrades
+```
+
+### Maintenance Window
+
+```yaml
+Mode: privileged (temporary)
+Rationale: Apply approved schema changes
+Password: Single-use, rotated after
+Monitoring: Full audit trail reviewed
+Process: Downgrade to readonly immediately after
+```
+
+## Best Practices
+
+<Check>**Start with readonly** - Default to most restrictive mode</Check>
+<Check>**Require password** - Always set a strong mode password</Check>
+<Check>**Log mode changes** - Monitor `integrity.log` for unexpected changes</Check>
+<Check>**Time-limited upgrades** - Downgrade after maintenance window</Check>
+<Check>**Rotate passwords** - Change passwords regularly, especially after personnel changes</Check>
+<Check>**Document upgrades** - Require change tickets for production mode changes</Check>
+<Check>**Alert on emergency** - Immediately notify security team if emergency mode is used</Check>
+
+## Common Workflows
+
+### Development Workflow
+
+```bash
+# 1. Start in readonly (default)
+chameleon status
+# Mode: readonly
+
+# 2. Upgrade for development
+chameleon config set mode=standard
+
+# 3. Develop and migrate
+chameleon migrate --apply
+
+# 4. Downgrade when done
+chameleon config set mode=readonly
+```
+
+### Production Deployment
+
+```bash
+# 1. Verify integrity first
+chameleon verify
+
+# 2. Request approval (change ticket)
+# 3. Schedule maintenance window
+
+# 4. Upgrade mode (time-limited)
+chameleon config set mode=standard
+
+# 5. Preview changes
+chameleon migrate --dry-run
+
+# 6. Apply migration
+chameleon migrate --apply
+
+# 7. Verify success
+chameleon status
+
+# 8. IMMEDIATELY downgrade
+chameleon config set mode=readonly
+
+# 9. Verify downgrade
+chameleon config get mode
+```
+
+### Incident Recovery
+
+```bash
+# 1. Assess incident
+# 2. Get emergency authorization
+
+# 3. Upgrade to emergency
+chameleon config set mode=emergency
+
+# 4. Fix issue (all actions logged)
+chameleon migrate --apply --force
+
+# 5. Downgrade immediately
+chameleon config set mode=readonly
+
+# 6. Review audit trail
+cat .chameleon/vault/integrity.log | grep EMERGENCY
+
+# 7. Document incident
+# 8. Rotate password
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Vault Integrity" icon="shield-check" href="/security/vault-integrity">
+    Learn about SHA256 hashing and tamper detection
+  </Card>
+  <Card title="Best Practices" icon="circle-check" href="/security/best-practices">
+    Security recommendations for production
+  </Card>
+</CardGroup>

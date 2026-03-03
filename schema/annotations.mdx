@@ -1,0 +1,457 @@
+---
+title: "Annotations"
+description: "Backend optimization hints for ChameleonDB schemas"
+---
+
+Annotations provide semantic hints about how data should be stored and accessed. They enable backend-specific optimizations without changing the logical domain model.
+
+## What Are Annotations?
+
+Annotations are **metadata markers** that hint at the intended usage pattern of a field:
+
+```go
+entity User {
+    id: uuid primary,
+    email: string,
+    
+    // Backend annotations
+    session_token: string @cache,        // Ephemeral, fast access
+    monthly_spent: decimal @olap,        // Analytical queries
+    embedding: vector(384) @vector,      // Similarity search
+}
+```
+
+Annotations:
+- **Do not change** the logical data model
+- **Do not force** a specific backend implementation
+- **Enable** future routing and optimization
+- Are **validated** at compile time
+
+## Available Annotations
+
+### @cache
+
+Marks data as ephemeral or frequently accessed:
+
+<ParamField path="@cache" type="annotation">
+  Indicates data that is ephemeral, frequently read, or needs fast access.
+  
+  **Use Cases:**
+  - Session tokens
+  - Rate limiting counters
+  - Temporary data
+  - View counts
+  - Cache keys
+  
+  **Example:**
+  ```go
+  entity User {
+      id: uuid primary,
+      email: string,
+      session_token: string @cache,
+      login_attempts: int @cache,
+  }
+  
+  entity Product {
+      id: uuid primary,
+      name: string,
+      views_today: int @cache,
+      trending_score: decimal @cache,
+  }
+  ```
+  
+  **Current Behavior (v1.0):**
+  - Fields are stored in the primary backend (PostgreSQL)
+  - Annotation is preserved for future routing
+  
+  **Future Behavior:**
+  - May route to Redis or similar cache backends
+  - May use different TTL policies
+  - May implement automatic expiration
+</ParamField>
+
+### @olap
+
+Marks data optimized for analytical queries:
+
+<ParamField path="@olap" type="annotation">
+  Indicates data used for analytical queries, aggregations, and reporting.
+  
+  **Use Cases:**
+  - Metrics and aggregates
+  - Historical data
+  - Data warehouse fields
+  - BI reporting
+  - Time-series data
+  
+  **Example:**
+  ```go
+  entity User {
+      id: uuid primary,
+      email: string,
+      monthly_spent: decimal @olap,
+      total_orders: int @olap,
+      lifetime_value: decimal @olap,
+  }
+  
+  entity Product {
+      id: uuid primary,
+      name: string,
+      monthly_sales: decimal @olap,
+      yearly_revenue: decimal @olap,
+  }
+  ```
+  
+  **Current Behavior (v1.0):**
+  - Fields are stored in the primary backend (PostgreSQL)
+  - Annotation is preserved for future routing
+  
+  **Future Behavior:**
+  - May route to DuckDB or columnar stores
+  - May use different indexing strategies
+  - May enable specialized aggregation paths
+</ParamField>
+
+### @vector
+
+Marks vector embeddings for similarity search:
+
+<ParamField path="@vector" type="annotation">
+  Indicates vector embeddings used for similarity search and ML operations.
+  
+  **Requirements:**
+  - Must be used with `vector(N)` type
+  - Dimension count required
+  
+  **Use Cases:**
+  - Text embeddings
+  - Image embeddings
+  - Similarity search
+  - Semantic search
+  - Recommendation systems
+  
+  **Example:**
+  ```go
+  entity Product {
+      id: uuid primary,
+      name: string,
+      description: string,
+      embedding: vector(384) @vector,     // Text embedding (384d)
+  }
+  
+  entity Image {
+      id: uuid primary,
+      url: string,
+      embedding: vector(1536) @vector,    // Image embedding (1536d)
+  }
+  
+  entity Document {
+      id: uuid primary,
+      content: string,
+      embedding_small: vector(384) @vector,
+      embedding_large: vector(1536) @vector,
+  }
+  ```
+  
+  **Current Behavior (v1.0):**
+  - Requires PostgreSQL with pgvector extension
+  - Stored as `VECTOR(N)` column type
+  - Can use vector similarity queries
+  
+  **Future Behavior:**
+  - May route to specialized vector databases (Pinecone, Weaviate)
+  - May use optimized similarity algorithms
+  - May enable hybrid search
+</ParamField>
+
+## Annotation Syntax
+
+Annotations appear after the field type and constraints:
+
+```go
+fieldName: type constraints @annotation
+```
+
+**Examples:**
+```go
+session: string @cache
+embedding: vector(384) @vector
+monthly_spent: decimal @olap
+views: int nullable @cache
+```
+
+## Validation Rules
+
+Annotations are validated at compile time:
+
+<Check>
+**Type Compatibility** - `@vector` requires `vector(N)` type
+</Check>
+
+<Check>
+**Single Annotation** - Each field can have at most one backend annotation
+</Check>
+
+<Check>
+**Valid Annotation** - Only recognized annotations are allowed
+</Check>
+
+```go
+// ✓ Valid
+embedding: vector(384) @vector
+session: string @cache
+
+// ✗ Invalid - wrong type
+embedding: string @vector  // Error: @vector requires vector(N) type
+
+// ✗ Invalid - multiple annotations
+data: string @cache @olap  // Error: only one annotation allowed
+```
+
+## Complete Example
+
+Here's a complete schema using all annotations:
+
+```go
+entity User {
+    // Standard OLTP fields (no annotation)
+    id: uuid primary,
+    email: string unique,
+    name: string,
+    created_at: timestamp default now(),
+    
+    // Cache-optimized fields
+    session_token: string @cache,
+    login_attempts: int @cache,
+    last_seen: timestamp @cache,
+    
+    // Analytical fields
+    monthly_spent: decimal @olap,
+    total_orders: int @olap,
+    lifetime_value: decimal @olap,
+    
+    // Relations
+    orders: [Order] via user_id,
+}
+
+entity Product {
+    // Standard OLTP fields
+    id: uuid primary,
+    name: string,
+    description: string,
+    price: decimal,
+    stock: int,
+    
+    // Cache-optimized fields
+    views_today: int @cache,
+    trending_score: decimal @cache,
+    
+    // Analytical fields
+    monthly_sales: decimal @olap,
+    yearly_revenue: decimal @olap,
+    
+    // Vector fields
+    embedding: vector(384) @vector,
+    image_embedding: vector(1536) @vector nullable,
+    
+    // Collections
+    tags: [string],
+}
+
+entity Order {
+    id: uuid primary,
+    total: decimal,
+    status: string,
+    created_at: timestamp default now(),
+    user_id: uuid,
+    
+    user: User,
+    items: [OrderItem] via order_id,
+}
+
+entity OrderItem {
+    id: uuid primary,
+    quantity: int,
+    price: decimal,
+    order_id: uuid,
+    product_id: uuid,
+    
+    order: Order,
+    product: Product,
+}
+```
+
+## Current Implementation (v1.0)
+
+In **v1.0-alpha**, all fields are stored in PostgreSQL regardless of annotation:
+
+```go
+entity User {
+    session: string @cache,        // → PostgreSQL TEXT
+    monthly_spent: decimal @olap,  // → PostgreSQL NUMERIC
+    embedding: vector(384) @vector, // → PostgreSQL VECTOR(384)
+}
+```
+
+Annotations are:
+- ✅ **Parsed** and validated
+- ✅ **Stored** in the schema vault
+- ✅ **Preserved** for future use
+- ⏳ **Not yet routed** to specialized backends
+
+## Future Backend Routing
+
+In future versions, annotations will enable automatic routing:
+
+```go
+entity User {
+    email: string,                  // → PostgreSQL
+    session: string @cache,         // → Redis (fast access)
+    monthly_spent: decimal @olap,   // → DuckDB (analytics)
+    embedding: vector(384) @vector, // → Pinecone (similarity)
+}
+```
+
+**Planned features:**
+- Automatic backend selection
+- Fallback strategies
+- Cross-backend queries
+- Consistency guarantees
+
+## Use Case Patterns
+
+### Session Management
+
+```go
+entity User {
+    id: uuid primary,
+    email: string,
+    
+    // Ephemeral session data
+    session_token: string @cache,
+    session_expires: timestamp @cache,
+    login_attempts: int @cache,
+}
+```
+
+### Analytics Dashboard
+
+```go
+entity Product {
+    id: uuid primary,
+    name: string,
+    
+    // Real-time metrics (cache)
+    views_today: int @cache,
+    
+    // Historical metrics (OLAP)
+    monthly_sales: decimal @olap,
+    quarterly_revenue: decimal @olap,
+    yearly_growth: decimal @olap,
+}
+```
+
+### Semantic Search
+
+```go
+entity Document {
+    id: uuid primary,
+    title: string,
+    content: string,
+    
+    // Vector embeddings for search
+    title_embedding: vector(384) @vector,
+    content_embedding: vector(1536) @vector,
+}
+```
+
+### E-commerce Product
+
+```go
+entity Product {
+    // OLTP fields
+    id: uuid primary,
+    sku: string unique,
+    name: string,
+    price: decimal,
+    stock: int,
+    
+    // Cache fields
+    views_today: int @cache,
+    trending_rank: int @cache,
+    
+    // OLAP fields
+    total_sold: int @olap,
+    revenue_30d: decimal @olap,
+    
+    // Vector fields
+    image_embedding: vector(512) @vector,
+    description_embedding: vector(384) @vector,
+}
+```
+
+## Best Practices
+
+<Tip>
+**Use @cache for ephemeral data** - Session tokens, counters, temporary flags
+</Tip>
+
+<Tip>
+**Use @olap for aggregates** - Metrics, historical data, reporting fields
+</Tip>
+
+<Tip>
+**Use @vector for embeddings** - Always pair with `vector(N)` type
+</Tip>
+
+<Tip>
+**Don't over-annotate** - Only annotate fields with clear performance needs
+</Tip>
+
+<Warning>
+Annotations are hints, not guarantees. The runtime may store data differently based on available backends.
+</Warning>
+
+## Design Philosophy
+
+**Annotations follow these principles:**
+
+1. **Declarative** - Express intent, not implementation
+2. **Optional** - Fields work without annotations
+3. **Non-breaking** - Adding/removing annotations doesn't break the schema
+4. **Future-proof** - Enable optimization without rewriting schemas
+
+```go
+// Schema evolution example:
+
+// v1: No annotations
+entity User {
+    id: uuid primary,
+    session: string,
+}
+
+// v2: Add annotation (non-breaking)
+entity User {
+    id: uuid primary,
+    session: string @cache,  // Just a hint - still works
+}
+```
+
+## Annotation Reference
+
+| Annotation | Required Type | Current Backend | Future Backends |
+|------------|---------------|----------------|------------------|
+| `@cache` | Any | PostgreSQL | Redis, Memcached |
+| `@olap` | Any | PostgreSQL | DuckDB, ClickHouse |
+| `@vector` | `vector(N)` | PostgreSQL + pgvector | Pinecone, Weaviate |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Field Types" icon="list" href="/schema/fields-types">
+    Learn about the vector(N) type
+  </Card>
+  <Card title="Migrations" icon="database" href="/cli/migrations">
+    Apply schema changes safely
+  </Card>
+</CardGroup>

@@ -1,80 +1,416 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: 'Quick Start'
+description: 'Get started with ChameleonDB in 5 minutes'
 ---
 
-## Get started in three steps
+# Quick Start Guide
 
-Get your documentation site running locally and make your first customization.
+Get started with ChameleonDB in 5 minutes.
 
-### Step 1: Set up your local environment
+## Prerequisites
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
+Before you begin, ensure you have:
+
+- **Go 1.21+** installed
+- **PostgreSQL 14+** running
+- Terminal access (bash, zsh, or PowerShell)
+
+## Installation
+
+See the [Installation Guide](/installation) for detailed instructions on Linux, macOS, and Windows.
+
+Quick install:
+
+```bash
+# Linux and macOS
+curl -sSL https://chameleondb.dev/install | sh
+```
+
+Verify installation:
+
+```bash
+chameleon --version
+# Output: chameleon v1.0-alpha
+```
+
+## Your First ChameleonDB Project
+
+<Steps>
+  <Step title="Initialize Project">
+    Create a new directory and initialize ChameleonDB:
     
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
+    ```bash
+    mkdir my-app
+    cd my-app
+    chameleon init
+    ```
     
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
+    **What happens:**
+    - Creates `.chameleon/` directory
+    - Initializes Schema Vault
+    - Creates default `schema.cham`
+    - Sets mode to `readonly`
     
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    **Output:**
+    ```
+    ✅ Created .chameleon/ directory
+    ✅ Schema Vault initialized
+    ✅ Created schema.cham
+    ℹ️  Paranoid Mode: readonly
+    💡 Tip: Set mode password with 'chameleon config auth set-password'
+    ```
+  </Step>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+  <Step title="Define Your Schema">
+    Edit `schema.cham` to define your data model:
+    
+    ```go schema.cham
+    entity User {
+        id: uuid primary,
+        email: string unique,
+        name: string,
+        created_at: timestamp default now(),
+        posts: [Post] via author_id,
+    }
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+    entity Post {
+        id: uuid primary,
+        title: string,
+        content: string,
+        published: bool default false,
+        created_at: timestamp default now(),
+        author_id: uuid,
+        author: User,
+    }
+    ```
+    
+    **Validate your schema:**
+    ```bash
+    chameleon validate
+    ```
+    
+    **Output:**
+    ```
+    ✅ Schema validated successfully
+       Entities: 2 (User, Post)
+       Relations: 2 (users.posts, posts.author)
+    ```
+  </Step>
 
-### Step 3: Go live
+  <Step title="Configure Database Connection">
+    Set your PostgreSQL connection string:
+    
+    ```bash
+    export DATABASE_URL="postgresql://user:password@localhost:5432/mydb"
+    ```
+    
+    <Note>
+      Replace `user`, `password`, and `mydb` with your actual PostgreSQL credentials.
+    </Note>
+  </Step>
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+  <Step title="Run Migration">
+    Apply your schema to the database:
+    
+    ```bash
+    chameleon migrate --apply
+    ```
+    
+    **Output:**
+    ```
+    📦 Initializing Schema Vault...
+       ✓ Created .chameleon/vault/
+       ✓ Registered schema as v001
+       ✓ Hash: 3f2a8b9c...
 
-## Next steps
+    📋 Migration Preview:
+    ─────────────────────────────────────────────────
+    CREATE TABLE users (
+        id UUID PRIMARY KEY,
+        email VARCHAR UNIQUE NOT NULL,
+        name VARCHAR NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
 
-Now that you have your docs running, explore these key features:
+    CREATE TABLE posts (
+        id UUID PRIMARY KEY,
+        title VARCHAR NOT NULL,
+        content TEXT,
+        published BOOLEAN NOT NULL DEFAULT false,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        author_id UUID REFERENCES users(id)
+    );
+    ─────────────────────────────────────────────────
 
-<CardGroup cols={2}>
+    ✅ Migration applied successfully
+    ✅ Schema v001 locked in vault
+    ```
+    
+    <Tip>
+      Use `--dry-run` flag to preview SQL without applying: `chameleon migrate --dry-run`
+    </Tip>
+  </Step>
 
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
+  <Step title="Use in Your Application">
+    Initialize a Go module and add ChameleonDB:
+    
+    ```bash
+    go mod init my-app
+    go get github.com/chameleon-db/chameleondb/chameleon
+    ```
+    
+    Create `main.go`:
+    
+    ```go main.go
+    package main
 
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
+    import (
+        "context"
+        "fmt"
+        "log"
+        
+        "github.com/chameleon-db/chameleondb/chameleon/pkg/engine"
+        "github.com/google/uuid"
+    )
 
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
+    func main() {
+        ctx := context.Background()
+        
+        // Connect (loads schema from vault automatically)
+        eng, err := engine.NewEngine()
+        if err != nil {
+            log.Fatal(err)
+        }
+        defer eng.Close()
+        
+        // Insert user
+        result, err := eng.Insert("User").
+            Set("id", uuid.New().String()).
+            Set("email", "ana@mail.com").
+            Set("name", "Ana Garcia").
+            Execute(ctx)
+        
+        if err != nil {
+            log.Fatal(err)
+        }
+        
+        fmt.Printf("User created: %v\n", result.ID)
+        
+        // Query users
+        users, err := eng.Query("User").
+            Filter("email", "eq", "ana@mail.com").
+            Execute(ctx)
+        
+        if err != nil {
+            log.Fatal(err)
+        }
+        
+        for _, user := range users.Rows {
+            fmt.Printf("User: %s <%s>\n", user["name"], user["email"])
+        }
+    }
+    ```
+    
+    **Run your application:**
+    ```bash
+    go run main.go
+    ```
+    
+    **Output:**
+    ```
+    User created: 550e8400-e29b-41d4-a716-446655440000
+    User: Ana Garcia <ana@mail.com>
+    ```
+  </Step>
+</Steps>
 
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
+## Query with Relations
 
-</CardGroup>
+ChameleonDB makes it easy to query related data:
+
+```go
+// Query users with their posts (eager loading)
+result, err := eng.Query("User").
+    Select("id", "name", "email").
+    Include("posts").
+    Execute(ctx)
+
+if err != nil {
+    log.Fatal(err)
+}
+
+for _, user := range result.Rows {
+    fmt.Printf("User: %s\n", user["name"])
+    
+    if posts, ok := result.Relations["posts"]; ok {
+        fmt.Printf("  Posts: %d\n", len(posts))
+        for _, post := range posts {
+            fmt.Printf("  - %s\n", post["title"])
+        }
+    }
+}
+```
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  Using `Include()` prevents N+1 query problems by eagerly loading related data. ChameleonDB's IdentityMap automatically deduplicates objects in memory.
 </Note>
+
+## Debug Mode
+
+See the generated SQL for any query:
+
+```go
+result, err := eng.Query("User").
+    Filter("email", "like", "ana").
+    Debug().  // ← Shows SQL
+    Execute(ctx)
+```
+
+**Output:**
+```
+[SQL] Query User
+SELECT * FROM users WHERE email LIKE '%ana%'
+
+[TRACE] Query on User: 2.3ms, 1 rows
+```
+
+## Schema Vault Commands
+
+ChameleonDB tracks every schema change in the Schema Vault:
+
+<CodeGroup>
+```bash View version history
+chameleon journal schema
+```
+
+```bash Check status
+chameleon status
+```
+
+```bash Verify integrity
+chameleon verify
+```
+
+```bash View specific version
+chameleon journal schema v001
+```
+</CodeGroup>
+
+### Example: View Version History
+
+```bash
+$ chameleon journal schema
+
+📖 Schema Version History
+
+v002 (current) ✓
+├─ Hash: 7d4e1c2a...
+├─ Date: 2026-02-20 15:45:00
+├─ Author: dperalta
+├─ Changes: Added age field to User
+└─ Parent: v001
+
+v001
+├─ Hash: 3f2a8b9c...
+├─ Date: 2026-02-20 10:30:00
+├─ Author: dperalta
+├─ Changes: Initial schema
+└─ Parent: none
+```
+
+## Integrity Modes
+
+ChameleonDB uses integrity modes to control who can modify schemas:
+
+```bash
+# Check current mode
+chameleon status
+
+# Set password for mode upgrades (recommended)
+chameleon config auth set-password
+# Enter new password: ********
+# ✅ Mode password configured
+
+# Upgrade to allow schema changes
+chameleon config set mode=standard
+# 🔐 Enter mode password: ********
+# ✅ Mode upgraded to standard
+
+# Downgrade (no password required)
+chameleon config set mode=readonly
+# ✅ Mode downgraded to readonly
+```
+
+<Warning>
+  In `readonly` mode (the default), schema modifications are blocked. Upgrade to `standard` mode for development.
+</Warning>
+
+## Common Issues
+
+<AccordionGroup>
+  <Accordion title="vault not initialized">
+    **Solution:** Run `chameleon init` in your project directory.
+    
+    ```bash
+    chameleon init
+    ```
+  </Accordion>
+
+  <Accordion title="readonly mode: blocked">
+    **Solution:** Upgrade to standard mode.
+    
+    ```bash
+    chameleon config auth set-password
+    chameleon config set mode=standard
+    ```
+  </Accordion>
+
+  <Accordion title="integrity violation">
+    **Solution:** Check what changed and view the audit log.
+    
+    ```bash
+    chameleon verify
+    cat .chameleon/vault/integrity.log
+    ```
+  </Accordion>
+
+  <Accordion title="DATABASE_URL not set">
+    **Solution:** Set the environment variable.
+    
+    ```bash
+    export DATABASE_URL="postgresql://user:pass@host:5432/db"
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Installation Guide" icon="download" href="/installation">
+    Detailed installation for Linux, macOS, and Windows
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/cli/overview">
+    Complete guide to all CLI commands
+  </Card>
+  <Card title="Query API" icon="code" href="/api/engine">
+    Type-safe query and mutation reference
+  </Card>
+  <Card title="Examples" icon="flask" href="https://github.com/chameleon-db/chameleon-examples">
+    Real-world example applications
+  </Card>
+</CardGroup>
+
+## What You've Learned
+
+- ✅ How to initialize ChameleonDB projects
+- ✅ How to define schemas in `.cham` files
+- ✅ How to run migrations with the Schema Vault
+- ✅ How to query data with the Go SDK
+- ✅ How to use Debug mode to see SQL
+- ✅ How to manage integrity modes
+
+## Getting Help
+
+- **Documentation**: [https://chameleondb.dev/docs](https://chameleondb.dev/docs)
+- **GitHub Issues**: [https://github.com/chameleon-db/chameleondb/issues](https://github.com/chameleon-db/chameleondb/issues)
+- **Discord**: [https://chameleondb.dev/discord](https://chameleondb.dev/discord)

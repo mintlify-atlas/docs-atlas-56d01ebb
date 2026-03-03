@@ -1,0 +1,404 @@
+---
+title: Schema Language
+description: Domain-first data modeling with the ChameleonDB schema language
+---
+
+ChameleonDB includes a **domain-specific language (DSL)** for defining data models as semantic domains, not raw SQL tables. The language has its own syntax, parser, type system, and validation rules.
+
+## Overview
+
+The ChameleonDB schema language allows you to:
+
+- Define entities, fields, and relationships
+- Specify types, constraints, and defaults
+- Add backend annotations for future optimization
+- Express intent clearly without SQL boilerplate
+
+<Info>
+The schema language is **compiled and validated** before execution. Invalid schemas fail at compile time, not runtime.
+</Info>
+
+## Basic Syntax
+
+### Entities
+
+Define domain entities using the `entity` keyword:
+
+```go
+entity User {
+    id: uuid primary,
+    email: string unique,
+    name: string,
+    created_at: timestamp default now(),
+}
+```
+
+### Fields
+
+Each field has:
+- **Name** - Identifier (e.g., `email`)
+- **Type** - Data type (e.g., `string`, `uuid`, `timestamp`)
+- **Modifiers** - Optional constraints (e.g., `primary`, `unique`)
+- **Defaults** - Optional default values (e.g., `default now()`)
+
+### Relationships
+
+Express relationships directly in the schema:
+
+```go
+entity User {
+    id: uuid primary,
+    email: string unique,
+    name: string,
+    posts: [Post] via author_id,    // One-to-many
+}
+
+entity Post {
+    id: uuid primary,
+    title: string,
+    content: string,
+    author_id: uuid,
+    author: User,                    // Many-to-one
+}
+```
+
+## Type System
+
+### Primitive Types
+
+| Type | Description | Example |
+|------|-------------|----------|
+| `string` | Text data | `"John Doe"` |
+| `int` | Integer numbers | `42` |
+| `decimal` | Decimal numbers | `99.99` |
+| `bool` | Boolean values | `true`, `false` |
+| `uuid` | UUID identifiers | `550e8400-e29b-41d4-a716-446655440000` |
+| `timestamp` | Date and time | `2026-02-20T15:45:00Z` |
+| `date` | Date only | `2026-02-20` |
+| `time` | Time only | `15:45:00` |
+
+### Special Types
+
+```go
+// Vector type (for ML/AI features)
+embedding: vector(384)
+
+// Arrays
+tags: [string]
+
+// Optional fields (nullable)
+middle_name: string?
+```
+
+### Type Validation
+
+The type checker validates:
+- ✅ All field types are valid
+- ✅ References to other entities exist
+- ✅ Primary keys are defined
+- ✅ Foreign keys match target types
+- ✅ No circular ownership dependencies
+
+## Constraints
+
+### Primary Keys
+
+Every entity **must** have exactly one primary key:
+
+```go
+entity User {
+    id: uuid primary,    // ✅ Valid
+    // ...
+}
+```
+
+<Warning>
+Entities without a primary key will fail validation.
+</Warning>
+
+### Unique Constraints
+
+```go
+entity User {
+    id: uuid primary,
+    email: string unique,    // Unique constraint
+    name: string,
+}
+```
+
+### Not Null
+
+By default, all fields are NOT NULL unless marked optional:
+
+```go
+entity User {
+    name: string,         // NOT NULL (default)
+    middle_name: string?, // NULL allowed
+}
+```
+
+## Default Values
+
+Specify default values with the `default` keyword:
+
+```go
+entity User {
+    id: uuid primary,
+    created_at: timestamp default now(),
+    status: string default "active",
+    is_verified: bool default false,
+}
+```
+
+### Supported Default Functions
+
+- `now()` - Current timestamp
+- `uuid()` - Generate UUID (backend-specific)
+- Literal values: strings, numbers, booleans
+
+## Relationships
+
+### One-to-Many
+
+```go
+entity User {
+    id: uuid primary,
+    posts: [Post] via author_id,    // Collection
+}
+
+entity Post {
+    id: uuid primary,
+    author_id: uuid,
+    author: User,                    // Reference
+}
+```
+
+### Many-to-One
+
+```go
+entity Post {
+    id: uuid primary,
+    author_id: uuid,
+    author: User,    // Many posts → one user
+}
+
+entity User {
+    id: uuid primary,
+}
+```
+
+### One-to-One
+
+```go
+entity User {
+    id: uuid primary,
+    profile: Profile,
+}
+
+entity Profile {
+    id: uuid primary,
+    user_id: uuid unique,    // Unique makes it 1:1
+    bio: string,
+}
+```
+
+<Note>
+Relationship validation happens at compile time. Invalid references fail before any code runs.
+</Note>
+
+## Annotations
+
+Annotations provide **semantic hints** about data storage without changing the logical model:
+
+```go
+entity User {
+    id: uuid primary,
+    email: string unique,
+    session_token: string @cache,        // Hint: cache-friendly
+    monthly_spent: decimal @olap,        // Hint: analytical queries
+    embedding: vector(384) @vector,      // Hint: vector search
+}
+```
+
+### Available Annotations
+
+| Annotation | Purpose | Example |
+|------------|---------|----------|
+| `@cache` | Cache-friendly data | Session tokens |
+| `@olap` | Analytical queries | Aggregates, metrics |
+| `@vector` | Vector search | ML embeddings |
+
+<Info>
+Annotations are validated at compile time but currently act as declarative metadata. Future versions will use them for backend routing.
+</Info>
+
+## Complete Example
+
+A full schema with multiple entities and relationships:
+
+```go
+entity User {
+    id: uuid primary,
+    email: string unique,
+    name: string,
+    created_at: timestamp default now(),
+    posts: [Post] via author_id,
+    orders: [Order] via user_id,
+}
+
+entity Post {
+    id: uuid primary,
+    title: string,
+    content: string,
+    published: bool default false,
+    author_id: uuid,
+    author: User,
+    created_at: timestamp default now(),
+}
+
+entity Order {
+    id: uuid primary,
+    total: decimal,
+    status: string default "pending",
+    user_id: uuid,
+    user: User,
+    items: [OrderItem] via order_id,
+    created_at: timestamp default now(),
+}
+
+entity OrderItem {
+    id: uuid primary,
+    order_id: uuid,
+    product_name: string,
+    quantity: int,
+    price: decimal,
+    order: Order,
+}
+```
+
+## Validation Pipeline
+
+Schemas go through a three-stage validation pipeline:
+
+```
+1. Parser (LALRPOP)
+   ├─ Syntax validation
+   ├─ AST generation
+   └─ Basic structure checks
+       ↓
+2. Type Checker (Rust)
+   ├─ Relations validation
+   │  ├─ Entity references exist
+   │  └─ Foreign keys match types
+   ├─ Constraints validation
+   │  ├─ Primary keys defined
+   │  └─ Annotation rules
+   └─ Cycle detection
+       ↓
+3. Validated Schema
+   └─ Ready for execution
+```
+
+<Note>
+Invalid schemas fail at compile time with clear, contextual error messages.
+</Note>
+
+## Error Messages
+
+ChameleonDB provides clear error messages:
+
+```
+❌ Validation Error: Missing primary key
+   Entity: User
+   Problem: No field marked as 'primary'
+   Suggestion: Add 'primary' modifier to a field (usually 'id')
+
+❌ Validation Error: Invalid relation target
+   Entity: Post
+   Field: author
+   Problem: Entity 'Usr' does not exist (did you mean 'User'?)
+```
+
+## Schema Files
+
+Schemas are stored in `.cham` files:
+
+```bash
+# Single file
+schema.cham
+
+# Multiple files (auto-merged)
+schemas/
+  ├── user.cham
+  ├── post.cham
+  └── order.cham
+```
+
+<Info>
+Multiple `.cham` files are automatically merged during compilation.
+</Info>
+
+## Compilation
+
+Compile schemas with the CLI:
+
+```bash
+# Validate syntax
+chameleon validate
+
+# Generate migration
+chameleon migrate
+
+# Apply migration (registers in vault)
+chameleon migrate --apply
+```
+
+## Best Practices
+
+1. **Use clear entity names** - `User`, `Post`, not `usr`, `p`
+2. **Always define primary keys** - Usually `id: uuid primary`
+3. **Make relationships explicit** - Use `via` for clarity
+4. **Use meaningful defaults** - `created_at: timestamp default now()`
+5. **Annotate intentionally** - Only when backend hints add value
+6. **Keep schemas versioned** - Commit `.cham` files to git
+7. **Document complex relationships** - Add comments for clarity
+
+## Schema Evolution
+
+Schemas evolve through the [Schema Vault](/concepts/schema-vault):
+
+```bash
+# v001: Initial schema
+entity User {
+    id: uuid primary,
+    email: string unique,
+    name: string,
+}
+
+# v002: Add age field
+entity User {
+    id: uuid primary,
+    email: string unique,
+    name: string,
+    age: int,              // NEW FIELD
+}
+```
+
+Each change creates a new immutable version in the vault.
+
+## What ChameleonDB is NOT
+
+The schema language is **not**:
+
+- ❌ A general-purpose programming language
+- ❌ A query language (see Query API)
+- ❌ SQL (though it generates SQL)
+- ❌ A replacement for your database
+
+It is a **domain-specific language** for defining data models.
+
+## Next Steps
+
+- Learn about the [Schema Vault](/concepts/schema-vault) for version management
+- Understand [Integrity Modes](/concepts/integrity-modes) for governance
+- Explore the [Architecture](/concepts/architecture)

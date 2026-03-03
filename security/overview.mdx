@@ -1,0 +1,189 @@
+---
+title: 'Security Overview'
+description: 'Multi-layered security model with cryptographic integrity and ring-based access control'
+---
+
+ChameleonDB implements a **defense-in-depth security model** with five layers protecting schema integrity and access control.
+
+## Security Architecture
+
+```
+┌───────────────────────────────────────┐
+│  Application Code (Restricted)        │
+│  - Can only load from vault           │
+│  - Mode enforcement at runtime        │
+└───────────────────────────────────────┘
+                  ↓
+┌───────────────────────────────────────┐
+│  Schema Vault (Source of Truth)       │
+│  - Versioned schemas                  │
+│  - SHA256 integrity                   │
+│  - Immutable snapshots                │
+└───────────────────────────────────────┘
+                  ↑
+┌───────────────────────────────────────┐
+│  CLI (Trusted)                        │
+│  - Merge schemas                      │
+│  - Verify integrity                   │
+│  - Register versions                  │
+└───────────────────────────────────────┘
+```
+
+## The 5 Security Layers
+
+### 1. File Permissions (OS-level)
+
+```bash
+# Recommended permissions
+chmod 700 .chameleon/              # Owner only
+chmod 700 .chameleon/vault/
+chmod 600 .chameleon/vault/auth/   # Passwords
+chmod 644 .chameleon.yml           # Readable config
+```
+
+**Purpose:** Prevent unauthorized file system access at the OS level.
+
+### 2. Hash Integrity (Vault)
+
+Every schema version is cryptographically hashed using SHA256:
+
+```
+.chameleon/vault/
+├── manifest.json          # Version metadata
+├── versions/
+│   ├── v001.json         # Schema snapshot
+│   └── v002.json
+└── hashes/
+    ├── v001.hash         # SHA256 verification
+    └── v002.hash
+```
+
+**How it works:**
+1. Schema saved to `versions/v001.json`
+2. SHA256 hash computed and saved to `hashes/v001.hash`
+3. On every load, hash is verified
+4. If mismatch → integrity violation detected
+
+**Purpose:** Tamper detection for all schema files.
+
+<Note>
+Learn more about vault integrity in [Vault Integrity](/security/vault-integrity).
+</Note>
+
+### 3. Integrity Modes (Access Control)
+
+Four operational modes control schema modifications:
+
+| Mode | Ring | Access | Schema Changes |
+|------|------|--------|----------------|
+| **readonly** | R3 | Production default | ❌ Blocked |
+| **standard** | R2 | Development teams | ✅ Controlled |
+| **privileged** | R1 | DBAs | ✅ Direct (logged) |
+| **emergency** | R0 | Incident recovery | ✅ No checks (audited) |
+
+**Mode enforcement:**
+- Application code checks mode before operations
+- Mode upgrades require password authentication
+- All mode changes logged in audit trail
+
+<Note>
+Learn more about modes in [Mode Enforcement](/security/mode-enforcement).
+</Note>
+
+### 4. Vault-Enforced Loading
+
+Application code **cannot bypass** the vault:
+
+```go
+// ✅ SECURE (default)
+eng, err := engine.NewEngine()
+// ↑ Loads ONLY from .chameleon/state/schema.merged.cham
+// ↑ Verifies integrity automatically
+// ↑ Enforces mode restrictions
+
+// ❌ INSECURE (blocked by mode)
+eng.LoadSchemaFromFile("untrusted.cham")
+// → Error: blocked by readonly mode
+```
+
+**Purpose:** Prevent schema bypass attacks.
+
+### 5. Audit Trail
+
+Complete event logging:
+
+**integrity.log (append-only):**
+```
+2026-02-23T10:30:00Z [INIT] vault_created version=v001
+2026-02-23T10:30:00Z [REGISTER] schema_registered version=v001 hash=3f2a8b9c...
+2026-02-23T10:35:00Z [MIGRATE] migration_applied version=v001 tables_created=3
+2026-02-23T15:45:00Z [MODE_CHANGE] from=readonly to=privileged type=upgrade
+```
+
+**Purpose:** Forensics and compliance.
+
+## Threat Model
+
+### What ChameleonDB Protects Against
+
+<Check>**Schema tampering** - Hashes detect file modifications</Check>
+<Check>**Unauthorized schema changes** - Mode enforcement blocks operations</Check>
+<Check>**Schema bypass attacks** - Vault is the only trusted source</Check>
+<Check>**Privilege escalation** - Mode upgrades require password</Check>
+<Check>**Audit trail tampering** - Append-only logs</Check>
+
+### What ChameleonDB Does NOT Protect Against
+
+<Warning>
+**Root/admin access** - OS-level root can modify anything. Use OS access controls (sudoers, SELinux).
+</Warning>
+
+<Warning>
+**Database compromise** - ChameleonDB doesn't secure the database itself. Use database security (SSL, auth, encryption at rest).
+</Warning>
+
+<Warning>
+**Memory attacks** - Passwords are in memory during operation. Use memory protection (ASLR, DEP).
+</Warning>
+
+<Warning>
+**Social engineering** - Users giving away passwords. Implement security training and MFA for production.
+</Warning>
+
+## Security Checklist
+
+Before deploying to production:
+
+```
+Security Configuration:
+[ ] File permissions set (700 for .chameleon/)
+[ ] Mode password configured
+[ ] Mode set to readonly
+[ ] DATABASE_URL in environment (not config)
+[ ] .env file gitignored
+
+Verification:
+[ ] chameleon verify passes
+[ ] No secrets in .chameleon.yml
+[ ] Audit logs working
+[ ] Mode upgrades require password
+
+Monitoring:
+[ ] integrity.log monitored for violations
+[ ] journal reviewed regularly
+[ ] Unexpected mode changes alerted
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Vault Integrity" icon="shield-check" href="/security/vault-integrity">
+    Learn about SHA256 hashing and tamper detection
+  </Card>
+  <Card title="Mode Enforcement" icon="lock" href="/security/mode-enforcement">
+    Understand ring-based access control
+  </Card>
+  <Card title="Best Practices" icon="circle-check" href="/security/best-practices">
+    Security recommendations for production
+  </Card>
+</CardGroup>

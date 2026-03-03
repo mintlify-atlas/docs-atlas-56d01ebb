@@ -1,0 +1,464 @@
+---
+title: Database Introspection
+description: Generate Chameleon schemas from existing PostgreSQL databases
+---
+
+The `chameleon introspect` command inspects an existing database schema and generates a ChameleonDB schema file (`.cham`). This is essential for:
+
+- Bootstrapping from legacy databases
+- Validating table discovery
+- Generating baseline schemas for migration workflows
+
+<Note>
+Currently, introspection only supports **PostgreSQL**. Support for MySQL and other databases is planned for v1.2+.
+</Note>
+
+## Command Syntax
+
+```bash
+chameleon introspect <database-url> [--output <file>] [--force]
+```
+
+### Parameters
+
+| Parameter | Short | Description | Default |
+|-----------|-------|-------------|----------|
+| `<database-url>` | - | Database connection string (required) | - |
+| `--output` | `-o` | Output file path | `schema.cham` |
+| `--force` | `-f` | Bypass overwrite safety checks | `false` |
+
+## Connection String Formats
+
+ChameleonDB supports multiple connection string formats for flexibility:
+
+### 1. Direct URL
+
+Provide the full connection string directly:
+
+```bash
+chameleon introspect postgresql://user:pass@localhost:5432/mydb
+```
+
+### 2. Shell-style Environment Variable (`$VAR`)
+
+Reference an environment variable using shell syntax:
+
+```bash
+export DATABASE_URL="postgresql://user:pass@localhost:5432/mydb"
+chameleon introspect $DATABASE_URL
+```
+
+### 3. Braced Environment Variable (`${VAR}`)
+
+Use braced syntax for clarity:
+
+```bash
+chameleon introspect ${DATABASE_URL}
+```
+
+### 4. Explicit Environment Reference (`env:VAR`)
+
+Use explicit `env:` prefix:
+
+```bash
+chameleon introspect env:DATABASE_URL
+```
+
+<Warning>
+If the referenced environment variable is missing or empty, the command will fail with an explicit error message.
+</Warning>
+
+## Basic Introspection Workflow
+
+<Steps>
+  <Step title="Set Your Connection String">
+    Export your database URL as an environment variable:
+
+    ```bash
+    export DATABASE_URL="postgresql://user:password@localhost:5432/mydb"
+    ```
+  </Step>
+
+  <Step title="Ensure Proper Mode">
+    Introspection requires `standard` mode or higher (blocked in `readonly`):
+
+    ```bash
+    # Check current mode
+    chameleon config get mode
+
+    # If readonly, upgrade
+    chameleon config auth set-password  # First time only
+    chameleon config set mode=standard
+    ```
+
+    See [Mode Management](/guides/mode-management) for details.
+  </Step>
+
+  <Step title="Run Introspection">
+    Generate the schema file:
+
+    ```bash
+    chameleon introspect $DATABASE_URL -o schema.cham
+    ```
+
+    **Output:**
+    ```
+    🔍 Introspecting database...
+       ✓ Connected to PostgreSQL
+       ✓ Found 3 tables
+       ✓ Found 12 columns
+       ✓ Found 2 foreign keys
+
+    📝 Generated schema.cham
+    ✅ Introspection complete
+    ```
+  </Step>
+
+  <Step title="Review Generated Schema">
+    Open the generated file and review:
+
+    ```bash
+    cat schema.cham
+    ```
+
+    **Example output:**
+    ```go
+    entity users {
+        id: uuid primary,
+        email: string unique,
+        name: string,
+        created_at: timestamp,
+    }
+
+    entity posts {
+        id: uuid primary,
+        title: string,
+        content: string,
+        author_id: uuid,
+        author: users,
+    }
+    ```
+  </Step>
+
+  <Step title="Validate and Customize">
+    Validate the schema and make manual adjustments:
+
+    ```bash
+    chameleon validate
+    ```
+
+    Common customizations:
+    - Rename entities to match your conventions
+    - Add missing relations
+    - Adjust field types
+    - Add default values
+  </Step>
+</Steps>
+
+## Mode Restrictions
+
+Introspection behavior depends on your current integrity mode:
+
+| Mode | Introspect Behavior |
+|------|---------------------|
+| `readonly` | ❌ **Blocked** |
+| `standard` | ✅ **Allowed** |
+| `privileged` | ✅ **Allowed** |
+| `emergency` | ✅ **Allowed** |
+
+### Upgrading from readonly
+
+Since mode upgrades require password authentication:
+
+```bash
+# Set password (first time only)
+chameleon config auth set-password
+Enter new password: ********
+✅ Mode password configured
+
+# Upgrade mode
+chameleon config set mode=standard
+🔐 Enter mode password: ****
+✅ Mode upgraded to standard
+
+# Now introspect
+chameleon introspect $DATABASE_URL
+```
+
+<Info>
+**Mode upgrade requires password** (e.g., `readonly` → `standard`)
+
+**Mode downgrade does NOT require password** (e.g., `standard` → `readonly`)
+</Info>
+
+## Output File Safety Checks
+
+Without `--force`, introspection applies safety protections:
+
+### 1. Directory Check
+
+Validates that the output path is not a directory:
+
+```bash
+chameleon introspect $DATABASE_URL -o ./schemas/
+```
+
+**Output:**
+```
+❌ Error: output path is a directory
+💡 Specify a file path: -o ./schemas/schema.cham
+```
+
+### 2. Template Detection
+
+Detects default template schemas created by `chameleon init`:
+
+```bash
+chameleon introspect $DATABASE_URL -o schema.cham
+```
+
+If `schema.cham` is an unmodified template:
+```
+✅ Overwriting default template schema.cham
+```
+
+### 3. Modified Schema Detection
+
+Detects working schemas and prompts for safety:
+
+```bash
+chameleon introspect $DATABASE_URL -o schema.cham
+```
+
+**Output:**
+```
+⚠️  schema.cham already exists and has been modified
+
+Options:
+  1. Backup existing file and continue
+  2. Specify a different output file
+  3. Abort
+
+Choice [1-3]:
+```
+
+### 4. Force Overwrite
+
+Bypass all safety checks:
+
+```bash
+chameleon introspect $DATABASE_URL -o schema.cham --force
+```
+
+<Warning>
+Use `--force` carefully — it will overwrite existing files without confirmation.
+</Warning>
+
+## Complete Examples
+
+### Baseline Introspection (Railway-style)
+
+Introspect a Railway PostgreSQL instance:
+
+```bash
+# Set connection string
+export DATABASE_URL="postgresql://postgres:pass@containers-us-west-123.railway.app:5432/railway"
+
+# Introspect to separate file
+chameleon introspect $DATABASE_URL -o schema.introspected.cham
+
+# Review
+cat schema.introspected.cham
+```
+
+### Explicit Environment Resolver
+
+Use explicit `env:` syntax:
+
+```bash
+chameleon introspect env:DATABASE_URL --output schema.cham
+```
+
+### Overwrite Existing Schema Intentionally
+
+Force overwrite without prompts:
+
+```bash
+chameleon introspect $DATABASE_URL --output schema.cham --force
+```
+
+### Introspect Production Database
+
+```bash
+# Export production URL
+export PROD_DATABASE_URL="postgresql://user:pass@prod.example.com:5432/proddb"
+
+# Introspect to versioned file
+chameleon introspect $PROD_DATABASE_URL -o schema.prod.$(date +%Y%m%d).cham
+
+# Review generated schema
+cat schema.prod.20260220.cham
+```
+
+## Post-Introspection Workflow
+
+### 1. Validate Generated Schema
+
+```bash
+chameleon validate
+```
+
+**Expected output:**
+```
+✅ Schema validated successfully
+   Entities: 5
+   Relations: 8
+```
+
+### 2. Review Relations
+
+Introspection discovers foreign keys but may need manual review:
+
+```go
+// Auto-discovered relation
+entity posts {
+    author_id: uuid,
+    author: users,  // ← Verify this is correct
+}
+
+// You might want to add the reverse relation:
+entity users {
+    posts: [posts] via author_id,
+}
+```
+
+### 3. Customize Naming
+
+Rename entities to match your conventions:
+
+```go
+// Before (table names)
+entity user_accounts { ... }
+
+// After (PascalCase)
+entity UserAccount { ... }
+```
+
+### 4. Apply Migration
+
+Once satisfied, apply to initialize vault:
+
+```bash
+chameleon migrate --apply
+```
+
+## Common Issues
+
+### "readonly mode: introspection blocked"
+
+**Solution:** Upgrade mode:
+
+```bash
+chameleon config auth set-password
+chameleon config set mode=standard
+```
+
+### "DATABASE_URL environment variable not set"
+
+**Solution:** Export the variable:
+
+```bash
+export DATABASE_URL="postgresql://..."
+```
+
+### "output path is a directory"
+
+**Solution:** Specify a file path:
+
+```bash
+chameleon introspect $DATABASE_URL -o schema.cham
+```
+
+### "connection refused"
+
+**Solution:** Verify database is running and accessible:
+
+```bash
+psql $DATABASE_URL -c "SELECT 1;"
+```
+
+## Operational Notes
+
+<AccordionGroup>
+  <Accordion title="Introspection is read-only">
+    Introspection only **reads** database metadata. It never modifies your database.
+  </Accordion>
+
+  <Accordion title="Review generated relations">
+    Foreign keys are auto-discovered, but you should manually verify:
+    - Relation names make sense
+    - Reverse relations are added where needed
+    - Cardinality is correct (one-to-many vs many-to-many)
+  </Accordion>
+
+  <Accordion title="Naming conventions">
+    Introspection uses database table/column names directly. You may want to:
+    - Convert `snake_case` to `PascalCase` for entities
+    - Use singular names (e.g., `User` instead of `users`)
+  </Accordion>
+
+  <Accordion title="Follow up with validation">
+    Always validate after introspection:
+    ```bash
+    chameleon validate
+    ```
+  </Accordion>
+
+  <Accordion title="Use version control">
+    Track generated schemas in Git to review changes:
+    ```bash
+    git add schema.cham
+    git commit -m "Add introspected schema from production"
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Best Practices
+
+1. **Use separate files for introspection**
+   ```bash
+   chameleon introspect $DATABASE_URL -o schema.introspected.cham
+   ```
+   Compare with your working schema before merging.
+
+2. **Version introspected schemas**
+   ```bash
+   chameleon introspect $DATABASE_URL -o schema.$(date +%Y%m%d).cham
+   ```
+
+3. **Always validate after introspection**
+   ```bash
+   chameleon validate
+   ```
+
+4. **Review before applying**
+   ```bash
+   chameleon migrate --dry-run
+   ```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Migration Workflow" icon="code-merge" href="/guides/migrations">
+    Apply introspected schema to database
+  </Card>
+  <Card title="Schema Language" icon="code" href="/core-concepts/schema-language">
+    Learn schema syntax and features
+  </Card>
+  <Card title="Mode Management" icon="shield" href="/guides/mode-management">
+    Understand integrity modes
+  </Card>
+  <Card title="Debugging" icon="bug" href="/guides/debugging">
+    Troubleshoot introspection issues
+  </Card>
+</CardGroup>

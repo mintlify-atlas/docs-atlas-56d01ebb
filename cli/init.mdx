@@ -1,0 +1,289 @@
+---
+title: 'chameleon init'
+description: 'Initialize a new ChameleonDB project'
+---
+
+## Synopsis
+
+```bash
+chameleon init [name]
+```
+
+Create a new ChameleonDB project with schema files and configuration.
+
+## Description
+
+Initializes a ChameleonDB project by creating:
+
+- `.chameleon.yml` - Main configuration file
+- `.chameleon/` - Admin directory (config, state, journal, backups)
+- `schemas/` - Directory for schema files
+- `schemas/example.cham` - Example schema to get started
+- `README.md` - Getting started guide
+
+If a project name is provided, creates a new directory. Otherwise, initializes in the current directory.
+
+## Arguments
+
+<ParamField path="name" type="string" optional>
+  Project name. Creates a new directory with this name.
+  
+  If omitted, initializes in the current directory.
+</ParamField>
+
+## Examples
+
+### Initialize in New Directory
+
+```bash
+chameleon init my-project
+```
+
+**Output:**
+```
+ℹ Creating new project in: my-project
+ℹ Creating .chameleon/ structure...
+✓ Created .chameleon/ directory
+ℹ Creating .chameleon.yml...
+✓ Created .chameleon.yml
+ℹ Creating schemas/ directory...
+✓ Created schemas/example.cham
+ℹ Creating README.md...
+✓ Created README.md
+
+✓ Project initialized successfully!
+
+Structure created:
+  .chameleon.yml        Configuration (edit this)
+  .chameleon/           Admin directory (auto-managed)
+    ├── config.yml      Configuration source
+    ├── state/          Local state (not versioned)
+    ├── journal/        Audit logs (not versioned)
+    └── backups/        Backup files (not versioned)
+  schemas/              Schema files
+    └── example.cham    Example schema
+  README.md             Getting started guide
+
+Next steps:
+  cd my-project
+  export DATABASE_URL="postgresql://user:password@localhost/dbname"
+  chameleon migrate --dry-run
+  chameleon migrate --apply
+
+Security tip:
+  Set an admin password to protect privileged/emergency mode changes.
+  Run: chameleon config auth set-password
+```
+
+### Initialize in Current Directory
+
+```bash
+mkdir blog && cd blog
+chameleon init
+```
+
+**Output:**
+```
+ℹ Initializing ChameleonDB in current directory: /home/user/blog
+✓ Created .chameleon/ directory
+✓ Created .chameleon.yml
+✓ Created schemas/example.cham
+✓ Created README.md
+
+✓ Project initialized successfully!
+```
+
+## Created Files
+
+### .chameleon.yml
+
+Main configuration file:
+
+```yaml
+database:
+  driver: postgresql
+  connection_string: ${DATABASE_URL}
+
+schema:
+  paths:
+    - ./schemas
+  merged_output: .chameleon/state/schema.merged.cham
+
+features:
+  auto_migration: true
+  rollback: true
+  backup_on_migrate: true
+  audit_logging: true
+
+safety:
+  validation: true
+  confirmation: false
+```
+
+### schemas/example.cham
+
+Starter schema with blog example:
+
+```chameleon
+// ChameleonDB Example Schema
+// This is a simple blog schema to get you started
+
+entity User {
+    id: uuid primary,
+    email: string unique,
+    name: string,
+    created_at: timestamp default now(),
+}
+
+entity Post {
+    id: uuid primary,
+    title: string,
+    content: string,
+    published: bool,
+    author_id: uuid,
+    created_at: timestamp default now(),
+}
+
+entity Comment {
+    id: uuid primary,
+    content: string,
+    post_id: uuid,
+    user_id: uuid,
+    created_at: timestamp default now(),
+}
+```
+
+### .chameleon/ Structure
+
+```
+.chameleon/
+├── config.yml          # Configuration source
+├── state/              # State tracking
+│   ├── current.json    # Current state
+│   └── migrations/     # Migration manifest
+├── journal/            # Audit logs (daily rotation)
+│   └── 2026-03-03.log
+├── vault/              # Schema Vault (auto-created on first migrate)
+└── backups/            # Migration backups
+```
+
+## Behavior
+
+### Already Initialized
+
+If `.chameleon.yml` already exists:
+
+```bash
+chameleon init
+```
+
+**Error:**
+```
+❌ ChameleonDB already initialized in current directory
+   Run 'chameleon migrate' to manage migrations or delete .chameleon.yml to reinitialize
+```
+
+### Directory Creation
+
+When creating a new project directory:
+
+```bash
+chameleon init my-app
+```
+
+- Creates `my-app/` directory
+- Sets up all files inside
+- Reports error if directory already exists with `.chameleon.yml`
+
+## After Initialization
+
+### 1. Set Database Connection
+
+```bash
+export DATABASE_URL="postgresql://user:password@localhost/dbname"
+```
+
+Or edit `.chameleon.yml`:
+
+```yaml
+database:
+  connection_string: "postgresql://localhost/mydb"
+```
+
+### 2. Edit Schema
+
+Modify `schemas/example.cham` or create new schema files:
+
+```bash
+vim schemas/users.cham
+```
+
+### 3. Run First Migration
+
+```bash
+# Preview changes
+chameleon migrate --dry-run
+
+# Apply migration
+chameleon migrate --apply
+```
+
+This will:
+- Auto-initialize Schema Vault
+- Register schema as v001
+- Apply migration to database
+- Set vault to `readonly` mode (default)
+
+### 4. Set Mode Password (Recommended)
+
+```bash
+chameleon config auth set-password
+```
+
+Protects mode upgrades from `readonly` to `standard`/`privileged`/`emergency`.
+
+## Version Control
+
+**Commit to Git:**
+- ✅ `.chameleon.yml`
+- ✅ `schemas/`
+- ✅ `README.md`
+
+**Add to .gitignore:**
+```gitignore
+# ChameleonDB local files
+.chameleon/state/
+.chameleon/journal/
+.chameleon/backups/
+.chameleon/vault/
+```
+
+<Note>
+The Schema Vault (`.chameleon/vault/`) should generally be ignored in version control, as it's auto-generated during migrations. However, some teams may choose to commit it for additional auditability.
+</Note>
+
+## Troubleshooting
+
+### Permission Denied
+
+```bash
+sudo chameleon init
+```
+
+Or ensure you have write permissions in the target directory.
+
+### Cannot Create Directory
+
+Ensure parent directory exists:
+
+```bash
+mkdir -p path/to/project
+chameleon init path/to/project/my-app
+```
+
+## See Also
+
+- [`chameleon migrate`](/cli/migrate) - Apply schema migrations
+- [`chameleon validate`](/cli/validate) - Validate schema files
+- [`chameleon status`](/cli/status) - Check project status
+- [Configuration Reference](/concepts/schema-vault) - Configure ChameleonDB

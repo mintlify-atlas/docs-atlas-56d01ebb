@@ -1,0 +1,156 @@
+---
+title: Query System Overview
+description: ChameleonDB's chainable query API with type validation and field projection
+---
+
+ChameleonDB queries are built using a **chainable API**. Every query targets an entity defined in your schema and is validated against it before execution.
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Type-Safe" icon="shield-check">
+    All queries are validated against your schema before execution
+  </Card>
+  <Card title="Chainable API" icon="link">
+    Build complex queries by chaining methods together
+  </Card>
+  <Card title="Field Projection" icon="table-columns">
+    Select only the fields you need with `Select()`
+  </Card>
+  <Card title="Eager Loading" icon="bolt">
+    Avoid N+1 queries with `Include()` for relations
+  </Card>
+</CardGroup>
+
+## Basic Query Structure
+
+All queries follow this pattern:
+
+```go
+result, err := db.Query("EntityName").
+    Filter("field", "operator", value).
+    Include("relation").
+    OrderBy("field", "direction").
+    Limit(10).
+    Execute(ctx)
+```
+
+## Example Schema
+
+All examples in this section use the following schema:
+
+```go
+entity User {
+    id: uuid primary,
+    email: string unique,
+    name: string,
+    age: int nullable,
+    created_at: timestamp default now(),
+    orders: [Order] via user_id,
+}
+
+entity Order {
+    id: uuid primary,
+    total: decimal,
+    status: string,
+    created_at: timestamp default now(),
+    user_id: uuid,
+    user: User,
+    items: [OrderItem] via order_id,
+}
+
+entity OrderItem {
+    id: uuid primary,
+    quantity: int,
+    price: decimal,
+    order_id: uuid,
+    order: Order,
+}
+```
+
+## Fetch All Records
+
+Retrieve all instances from an entity:
+
+<CodeGroup>
+```go Go
+users, err := db.Users().Execute()
+```
+
+```sql Generated SQL
+SELECT id, email, name, age, created_at
+FROM users;
+```
+</CodeGroup>
+
+## Field Projection
+
+Select only the fields you need:
+
+<CodeGroup>
+```go Go
+users := db.Query("User").
+    Select("id", "name", "email").
+    Execute(ctx)
+```
+
+```sql Generated SQL
+SELECT id, name, email
+FROM users;
+```
+</CodeGroup>
+
+<Tip>
+**Performance**: Field projection reduces memory usage and network transfer by only loading the data you need.
+</Tip>
+
+## Query Validation
+
+All queries are validated before execution. ChameleonDB will catch these errors at compile time:
+
+| Error | Example |
+|-------|----------|
+| Unknown entity | `db.Products()` when `Product` is not in schema |
+| Unknown field | `.Filter("phone", ...)` when `phone` is not a field |
+| Invalid relation path | `.Include("orders.address")` when `address` doesn't exist |
+| Type mismatch | `.Filter("age", "eq", "not a number")` |
+| Missing order with pagination | `.Limit(10)` without `.OrderBy()` warns |
+
+## Debug Mode
+
+See the generated SQL for any query:
+
+<CodeGroup>
+```go Go
+users := db.Query("User").
+    Select("id", "name").
+    Filter("email", "like", "ana").
+    Debug().
+    Execute(ctx)
+```
+
+```sql Output
+[SQL] Query User
+SELECT id, name FROM users WHERE email LIKE '%ana%'
+
+[TRACE] Query on User: 2.3ms, 3 rows
+```
+</CodeGroup>
+
+<Note>
+**Debug mode** is useful during development to understand how your queries translate to SQL.
+</Note>
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Filtering" icon="filter" href="/queries/filtering">
+    Learn about filter operators (eq, gt, like, in, etc.)
+  </Card>
+  <Card title="Relations" icon="diagram-project" href="/queries/relations">
+    Master eager loading with Include()
+  </Card>
+  <Card title="Advanced Queries" icon="wand-magic-sparkles" href="/queries/advanced">
+    OrderBy, Limit, Offset, and complex queries
+  </Card>
+</CardGroup>

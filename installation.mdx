@@ -1,0 +1,474 @@
+---
+title: 'Installation'
+description: 'Install ChameleonDB on Linux, macOS, and Windows'
+---
+
+# Installation
+
+ChameleonDB CLI is available for Linux, macOS, and Windows. Choose your platform below.
+
+## Prerequisites
+
+Before installing ChameleonDB, ensure you have:
+
+- **Go 1.21+** (for using ChameleonDB in your applications)
+- **PostgreSQL 14+** (as the backend database)
+- **Rust 1.75+** (only if building from source)
+
+## Quick Install
+
+<Tabs>
+  <Tab title="Linux / macOS">
+    ### Auto-Install Script
+    
+    The easiest way to install ChameleonDB on Linux or macOS:
+    
+    ```bash
+    curl -sSL https://chameleondb.dev/install | sh
+    ```
+    
+    This script will:
+    - Detect your platform and architecture
+    - Download the latest release binary
+    - Install to `/usr/local/bin/chameleon`
+    - Make it executable
+    
+    ### Verify Installation
+    
+    ```bash
+    chameleon --version
+    # Output: chameleon v1.0-alpha
+    ```
+    
+    <Tip>
+      The install script requires `curl` and `sudo` access. If you don't have sudo, see the manual installation section below.
+    </Tip>
+  </Tab>
+
+  <Tab title="Windows">
+    ### Download Binary
+    
+    ChameleonDB is distributed as a portable binary for Windows. No installer required.
+    
+    <Steps>
+      <Step title="Download">
+        Download the compressed `.gz` file:
+        
+        <a href="https://www.chameleondb.dev/windows" target="_blank">
+          Download ChameleonDB for Windows
+        </a>
+      </Step>
+
+      <Step title="Extract">
+        Extract the `.gz` file using WinRAR, WinZip, 7-Zip, or similar.
+        
+        You will get two files:
+        - `chameleon.exe`
+        - `chameleon.dll`
+        
+        <Warning>
+          Both files must be kept together in the same directory.
+        </Warning>
+      </Step>
+
+      <Step title="Move to Safe Folder">
+        Create a folder for ChameleonDB:
+        
+        ```powershell
+        C:\chameleon\
+        ```
+        
+        Move **both files** (`.exe` and `.dll`) into that folder.
+      </Step>
+
+      <Step title="Add to PATH">
+        To run `chameleon` from any terminal:
+        
+        1. Open **System Settings** → **Environment Variables**
+        2. Under **System variables**, select `Path` → **Edit**
+        3. Add the path: `C:\chameleon\` (or your chosen path)
+        4. Click **OK** to save
+        
+        <Note>
+          Close and reopen your terminal for the PATH change to take effect.
+        </Note>
+      </Step>
+
+      <Step title="Verify Installation">
+        Open a new terminal (CMD or PowerShell) and run:
+        
+        ```powershell
+        chameleon --version
+        # Output: chameleon v1.0-alpha
+        ```
+      </Step>
+    </Steps>
+  </Tab>
+</Tabs>
+
+## Manual Installation
+
+<AccordionGroup>
+  <Accordion title="Linux (Manual)">
+    ### Download Binary
+    
+    ```bash
+    # AMD64
+    curl -LO https://github.com/chameleon-db/chameleondb/releases/download/v1.0-alpha/chameleon-linux-amd64
+    
+    # ARM64
+    curl -LO https://github.com/chameleon-db/chameleondb/releases/download/v1.0-alpha/chameleon-linux-arm64
+    ```
+    
+    ### Install
+    
+    ```bash
+    # AMD64
+    chmod +x chameleon-linux-amd64
+    sudo mv chameleon-linux-amd64 /usr/local/bin/chameleon
+    
+    # ARM64
+    chmod +x chameleon-linux-arm64
+    sudo mv chameleon-linux-arm64 /usr/local/bin/chameleon
+    ```
+    
+    ### Verify
+    
+    ```bash
+    chameleon --version
+    ```
+    
+    <Note>
+      If you don't have sudo access, install to `~/bin/chameleon` and add `~/bin` to your PATH.
+    </Note>
+  </Accordion>
+
+  <Accordion title="macOS (Manual)">
+    ### Download Binary
+    
+    ```bash
+    # Intel (AMD64)
+    curl -LO https://github.com/chameleon-db/chameleondb/releases/download/v1.0-alpha/chameleon-darwin-amd64
+    
+    # Apple Silicon (ARM64)
+    curl -LO https://github.com/chameleon-db/chameleondb/releases/download/v1.0-alpha/chameleon-darwin-arm64
+    ```
+    
+    ### Install
+    
+    ```bash
+    # Intel
+    chmod +x chameleon-darwin-amd64
+    sudo mv chameleon-darwin-amd64 /usr/local/bin/chameleon
+    
+    # Apple Silicon
+    chmod +x chameleon-darwin-arm64
+    sudo mv chameleon-darwin-arm64 /usr/local/bin/chameleon
+    ```
+    
+    ### Handle macOS Security
+    
+    macOS may block the binary on first run:
+    
+    ```bash
+    # Remove quarantine attribute
+    xattr -d com.apple.quarantine /usr/local/bin/chameleon
+    ```
+    
+    ### Verify
+    
+    ```bash
+    chameleon --version
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Build from Source
+
+For advanced users who want to build ChameleonDB from source:
+
+<Steps>
+  <Step title="Install Prerequisites">
+    You'll need:
+    - **Rust 1.75+**: [https://rustup.rs](https://rustup.rs)
+    - **Go 1.21+**: [https://golang.org/dl](https://golang.org/dl)
+    - **Git**: [https://git-scm.com](https://git-scm.com)
+    - **Make**: Usually pre-installed on Linux/macOS
+  </Step>
+
+  <Step title="Clone Repository">
+    ```bash
+    git clone https://github.com/chameleon-db/chameleondb.git
+    cd chameleondb
+    ```
+  </Step>
+
+  <Step title="Build Rust Core">
+    ```bash
+    cd chameleon-core
+    cargo build --release
+    ```
+    
+    This creates `libchameleon.so` (Linux) or `libchameleon.dylib` (macOS).
+  </Step>
+
+  <Step title="Install Shared Library">
+    <CodeGroup>
+    ```bash Linux
+    sudo cp target/release/libchameleon.so /usr/local/lib/
+    sudo cp include/chameleon.h /usr/local/include/
+    sudo ldconfig
+    ```
+    
+    ```bash macOS
+    sudo cp target/release/libchameleon.dylib /usr/local/lib/
+    sudo cp include/chameleon.h /usr/local/include/
+    ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="Build Go CLI">
+    ```bash
+    cd ../chameleon
+    make build
+    ```
+    
+    This creates `./bin/chameleon`.
+  </Step>
+
+  <Step title="Install CLI">
+    ```bash
+    sudo make install
+    ```
+    
+    Or manually:
+    ```bash
+    sudo cp ./bin/chameleon /usr/local/bin/
+    ```
+  </Step>
+
+  <Step title="Verify Installation">
+    ```bash
+    chameleon --version
+    # Output: chameleon v1.0-alpha
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+  Building from source requires both Rust and Go toolchains. For most users, the pre-built binaries are recommended.
+</Warning>
+
+## Using ChameleonDB as a Go SDK
+
+If you want to use ChameleonDB in your Go application:
+
+### Install the Package
+
+```bash
+go get github.com/chameleon-db/chameleondb/chameleon@latest
+```
+
+### Requirements
+
+The Go package links to `libchameleon` via cgo:
+
+- **Linux**: `libchameleon.so` must be in `/usr/local/lib` (or set `CGO_LDFLAGS`)
+- **macOS**: `libchameleon.dylib` must be in `/usr/local/lib`
+- **Windows**: `chameleon.dll` must be in the same directory as your `.exe`
+- **Header**: `chameleon.h` should be in `/usr/local/include`
+
+### Build from Monorepo
+
+If building from the ChameleonDB monorepo:
+
+```bash
+# Build Rust core
+cd chameleon-core
+cargo build --release
+
+# Install library
+sudo cp target/release/libchameleon.so /usr/local/lib/
+sudo cp include/chameleon.h /usr/local/include/
+sudo ldconfig  # Linux only
+
+# Use in Go
+cd ../chameleon
+go build ./...
+```
+
+### Custom Library Location
+
+If you install the library in a non-standard location:
+
+```bash
+CGO_LDFLAGS="-L/path/to/lib -Wl,-rpath,/path/to/lib -lchameleon" \
+CGO_CFLAGS="-I/path/to/include" \
+go build ./...
+```
+
+<Tip>
+  For production deployments, we recommend using `pkg-config` to manage library paths. See the [ChameleonDB repository](https://github.com/chameleon-db/chameleondb) for details.
+</Tip>
+
+## Platform-Specific Notes
+
+<AccordionGroup>
+  <Accordion title="Linux">
+    ### Shared Library Location
+    
+    `libchameleon.so` must be in a directory that `ld` searches:
+    - `/usr/local/lib` (recommended)
+    - `/usr/lib`
+    - Custom path (requires `LD_LIBRARY_PATH` or `ldconfig` config)
+    
+    ### Update Library Cache
+    
+    After installing to `/usr/local/lib`:
+    ```bash
+    sudo ldconfig
+    ```
+    
+    ### Verify Library
+    
+    ```bash
+    ldd $(which chameleon)
+    # Should show libchameleon.so => /usr/local/lib/libchameleon.so
+    ```
+  </Accordion>
+
+  <Accordion title="macOS">
+    ### System Integrity Protection (SIP)
+    
+    macOS may block unsigned binaries. If you see a security warning:
+    
+    ```bash
+    xattr -d com.apple.quarantine /usr/local/bin/chameleon
+    ```
+    
+    ### Library Location
+    
+    `libchameleon.dylib` should be in:
+    - `/usr/local/lib` (recommended)
+    - Custom path (requires `DYLD_LIBRARY_PATH`)
+    
+    ### Verify Library
+    
+    ```bash
+    otool -L $(which chameleon)
+    # Should show libchameleon.dylib
+    ```
+  </Accordion>
+
+  <Accordion title="Windows">
+    ### DLL Location
+    
+    `chameleon.dll` must be:
+    - In the same directory as `chameleon.exe`
+    - In a directory listed in your `PATH`
+    - In `C:\Windows\System32` (not recommended)
+    
+    ### PowerShell Execution Policy
+    
+    If you encounter permission errors:
+    ```powershell
+    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+    ```
+    
+    ### Verify Installation
+    
+    ```powershell
+    Get-Command chameleon
+    # Should show: C:\chameleon\chameleon.exe
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Docker
+
+<Note>
+  Official Docker images are coming soon. For now, you can build your own:
+</Note>
+
+```dockerfile Dockerfile
+FROM rust:1.75 AS builder-rust
+WORKDIR /build
+COPY chameleon-core ./chameleon-core
+RUN cd chameleon-core && cargo build --release
+
+FROM golang:1.21 AS builder-go
+WORKDIR /build
+COPY --from=builder-rust /build/chameleon-core/target/release/libchameleon.so /usr/local/lib/
+COPY --from=builder-rust /build/chameleon-core/include/chameleon.h /usr/local/include/
+COPY chameleon ./chameleon
+RUN cd chameleon && make build
+
+FROM ubuntu:22.04
+COPY --from=builder-go /build/chameleon/bin/chameleon /usr/local/bin/
+COPY --from=builder-rust /build/chameleon-core/target/release/libchameleon.so /usr/local/lib/
+RUN ldconfig
+ENTRYPOINT ["chameleon"]
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="command not found: chameleon">
+    The binary is not in your PATH.
+    
+    **Solution:**
+    - Check installation location: `which chameleon`
+    - Add to PATH: `export PATH="$PATH:/usr/local/bin"`
+    - Reinstall with sudo: `sudo mv chameleon /usr/local/bin/`
+  </Accordion>
+
+  <Accordion title="error while loading shared libraries: libchameleon.so">
+    The shared library is not found.
+    
+    **Solution (Linux):**
+    ```bash
+    sudo cp libchameleon.so /usr/local/lib/
+    sudo ldconfig
+    ```
+    
+    **Solution (macOS):**
+    ```bash
+    sudo cp libchameleon.dylib /usr/local/lib/
+    ```
+  </Accordion>
+
+  <Accordion title="cannot execute binary file">
+    You downloaded the wrong architecture.
+    
+    **Solution:**
+    - Check your architecture: `uname -m`
+    - Download the correct binary (amd64 or arm64)
+  </Accordion>
+
+  <Accordion title="Windows: The system cannot find the file specified">
+    `chameleon.dll` is not in the same directory as `chameleon.exe`.
+    
+    **Solution:**
+    - Keep both files together
+    - Or add the DLL directory to your PATH
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Get started with ChameleonDB in 5 minutes
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/cli/overview">
+    Learn all available commands
+  </Card>
+</CardGroup>
+
+## Getting Help
+
+If you encounter installation issues:
+
+- **GitHub Issues**: [Report a bug](https://github.com/chameleon-db/chameleondb/issues)
+- **Discord**: [Join our community](https://chameleondb.dev/discord)
+- **Documentation**: [Browse all docs](https://chameleondb.dev/docs)

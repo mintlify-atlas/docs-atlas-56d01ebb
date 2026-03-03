@@ -1,0 +1,586 @@
+---
+title: 'Security Best Practices'
+description: 'Production security recommendations and operational guidelines'
+---
+
+Follow these best practices to ensure secure deployment and operation of ChameleonDB.
+
+## File Permissions
+
+### Set Permissions After Init
+
+```bash
+# After running chameleon init
+chmod 700 .chameleon/
+chmod 700 .chameleon/vault/
+chmod 600 .chameleon/vault/auth/mode.key
+chmod 644 .chameleon.yml
+```
+
+<Warning>
+**Critical:** The `auth/mode.key` file contains your hashed mode password. It must only be readable by the owner.
+</Warning>
+
+### Verify Permissions
+
+```bash
+# Check current permissions
+ls -la .chameleon/
+ls -la .chameleon/vault/
+ls -la .chameleon/vault/auth/
+
+# Expected output:
+drwx------  .chameleon/
+drwx------  .chameleon/vault/
+-rw-------  .chameleon/vault/auth/mode.key
+-rw-r--r--  .chameleon.yml
+```
+
+## Password Management
+
+### Set Strong Passwords
+
+```bash
+# Use strong, unique password
+chameleon config auth set-password
+
+Enter new password: ********  # 16+ chars, mixed case, numbers, symbols
+Confirm password: ********
+✅ Mode password configured
+```
+
+<Check>**Password requirements:**</Check>
+- Minimum 16 characters
+- Mix of uppercase and lowercase
+- Include numbers and symbols
+- Not used for other systems
+- Stored in password manager
+
+### Environment Variables for CI/CD
+
+**Don't hardcode passwords:**
+
+```yaml
+# ❌ BAD - Don't do this
+script:
+  - chameleon config set mode=standard --password="hardcoded123"
+```
+
+**Use environment variables:**
+
+```yaml
+# ✅ GOOD
+env:
+  CHAMELEON_MODE_PASSWORD: ${{ secrets.CHAMELEON_PASSWORD }}
+  
+script:
+  - chameleon config set mode=standard
+  - chameleon migrate --apply
+  - chameleon config set mode=readonly
+```
+
+### Password Rotation
+
+Rotate passwords regularly:
+
+```bash
+# Schedule quarterly rotation
+chameleon config auth set-password
+
+# Update in all environments:
+# 1. Development
+# 2. Staging  
+# 3. Production
+# 4. CI/CD secrets
+```
+
+<Info>
+Rotate immediately after personnel changes (departures, role changes).
+</Info>
+
+## Mode Strategy
+
+### Environment-Based Modes
+
+| Environment | Mode | Password Access | Monitoring |
+|-------------|------|----------------|------------|
+| Development | standard | Team shared | Basic |
+| Staging | readonly | DevOps only | Alerts on changes |
+| Production | readonly | DBA only | Alert on ANY change |
+| CI/CD | standard | Secret manager | Full audit |
+
+### Production Mode Workflow
+
+```bash
+# 1. Always start readonly
+Mode: readonly (default)
+
+# 2. Upgrade only during maintenance windows
+#    - Require change ticket
+#    - Get approval
+#    - Schedule window
+
+# 3. Upgrade, apply, downgrade
+chameleon config set mode=standard
+chameleon migrate --apply
+chameleon config set mode=readonly  # IMMEDIATELY
+
+# 4. Verify downgrade
+chameleon config get mode
+# Output: readonly
+```
+
+<Warning>
+**Never leave production in standard/privileged mode.** Downgrade immediately after maintenance.
+</Warning>
+
+## Secrets Management
+
+### Never Commit Secrets
+
+**.gitignore (required):**
+
+```gitignore
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Passwords and keys
+.chameleon/vault/auth/
+
+# Generated files
+.chameleon/state/schema.merged.cham
+
+# Database files (if using SQLite for testing)
+*.db
+*.sqlite
+```
+
+### Configuration Files
+
+**Don't put secrets in .chameleon.yml:**
+
+```yaml
+# ❌ BAD - Don't do this
+database:
+  host: "localhost"
+  port: 5432
+  user: "postgres"
+  password: "hardcoded123"  # ← NO!
+  database: "myapp"
+```
+
+**Use environment variables:**
+
+```yaml
+# ✅ GOOD
+database:
+  connection_string: "${DATABASE_URL}"
+```
+
+### Environment Variables
+
+**.env (gitignored):**
+
+```bash
+# Database connection
+DATABASE_URL=postgresql://user:password@host:5432/db
+
+# ChameleonDB mode password
+CHAMELEON_MODE_PASSWORD=strong-password-here
+
+# Application secrets
+API_KEY=xyz123
+SECRET_KEY=abc456
+```
+
+**Load in application:**
+
+```bash
+# Load .env
+export $(cat .env | xargs)
+
+# Or use direnv
+echo 'dotenv' > .envrc
+direnv allow
+```
+
+## Git Strategy
+
+### What to Commit
+
+<Check>**DO commit:**</Check>
+
+```gitignore
+✅ .chameleon.yml          # Public config (no secrets)
+✅ vault/manifest.json      # Version metadata
+✅ vault/versions/          # Schema snapshots
+✅ vault/hashes/            # Integrity hashes
+✅ vault/integrity.log      # Audit trail
+✅ schemas/*.cham           # Source schemas
+```
+
+<Warning>**DON'T commit:**</Warning>
+
+```gitignore
+❌ vault/auth/              # Passwords
+❌ .env                     # Secrets
+❌ state/schema.merged.cham # Generated
+❌ journal/                 # Local logs (optional)
+```
+
+### Pre-commit Hook
+
+Prevent accidental secret commits:
+
+**.git/hooks/pre-commit:**
+
+```bash
+#!/bin/bash
+
+# Check for secrets
+if git diff --cached --name-only | grep -q '.env$'; then
+  echo "❌ Error: Attempting to commit .env file"
+  exit 1
+fi
+
+if git diff --cached --name-only | grep -q 'vault/auth/'; then
+  echo "❌ Error: Attempting to commit password files"
+  exit 1
+fi
+
+# Verify vault integrity before commit
+chameleon verify || {
+  echo "❌ Error: Vault integrity check failed"
+  exit 1
+}
+
+echo "✅ Pre-commit checks passed"
+exit 0
+```
+
+```bash
+# Make executable
+chmod +x .git/hooks/pre-commit
+```
+
+## Monitoring & Alerts
+
+### Monitor integrity.log
+
+**Set up log monitoring:**
+
+```bash
+# Watch for violations
+tail -f .chameleon/vault/integrity.log | grep -i "violation\|emergency"
+```
+
+**Alert on suspicious events:**
+
+```bash
+#!/bin/bash
+# monitor-integrity.sh
+
+LOG=".chameleon/vault/integrity.log"
+ALERT_EMAIL="security@company.com"
+
+# Check for violations
+if tail -100 "$LOG" | grep -q "VIOLATION"; then
+  echo "ALERT: Integrity violation detected" | mail -s "ChameleonDB Alert" "$ALERT_EMAIL"
+fi
+
+# Check for emergency mode
+if tail -100 "$LOG" | grep -q "mode=emergency"; then
+  echo "ALERT: Emergency mode activated" | mail -s "ChameleonDB Alert" "$ALERT_EMAIL"
+fi
+```
+
+**Run periodically:**
+
+```bash
+# Cron every 5 minutes
+*/5 * * * * /path/to/monitor-integrity.sh
+```
+
+### Key Events to Monitor
+
+<Warning>**Alert immediately on:**</Warning>
+- Integrity violations
+- Emergency mode activation
+- Failed password attempts
+- Unexpected mode changes
+- Unusual migration activity
+
+<Info>**Review regularly:**</Info>
+- Mode change history
+- Migration patterns
+- User activity in logs
+
+## Backup Strategy
+
+### What to Backup
+
+**Critical:**
+```bash
+.chameleon/vault/          # Entire vault
+schemas/                   # Source schemas
+.chameleon.yml             # Configuration
+```
+
+**Optional:**
+```bash
+.chameleon/state/          # Current state
+.chameleon/journal/        # Operation logs
+```
+
+### Automated Backups
+
+**Daily vault backup:**
+
+```bash
+#!/bin/bash
+# backup-vault.sh
+
+DATE=$(date +%Y%m%d)
+BACKUP_DIR="/backups/chameleon"
+
+# Create backup
+tar -czf "$BACKUP_DIR/vault-$DATE.tar.gz" .chameleon/vault/
+
+# Keep last 30 days
+find "$BACKUP_DIR" -name "vault-*.tar.gz" -mtime +30 -delete
+
+echo "✅ Vault backed up: vault-$DATE.tar.gz"
+```
+
+**Cron daily at 2 AM:**
+
+```bash
+0 2 * * * /path/to/backup-vault.sh
+```
+
+### Verify Backups
+
+```bash
+# Test restore process
+tar -tzf /backups/chameleon/vault-20260223.tar.gz
+
+# Restore to temp location and verify
+mkdir /tmp/vault-test
+tar -xzf /backups/chameleon/vault-20260223.tar.gz -C /tmp/vault-test
+cd /tmp/vault-test
+chameleon verify
+```
+
+## Compliance & Audit
+
+### Audit Trail Requirements
+
+ChameleonDB provides:
+
+<Check>**Who** - User information in logs</Check>
+<Check>**What** - Detailed operation records</Check>
+<Check>**When** - Timestamp for all events</Check>
+<Check>**Why** - Context in commit messages</Check>
+<Check>**How** - Complete operation details</Check>
+
+### Regular Audit Review
+
+**Weekly:**
+```bash
+# Review recent mode changes
+chameleon journal last 100 | grep mode
+
+# Review migrations
+chameleon journal schema
+```
+
+**Monthly:**
+```bash
+# Full integrity log review
+cat .chameleon/vault/integrity.log | grep -E "MODE_CHANGE|VIOLATION|EMERGENCY"
+
+# Generate compliance report
+chameleon journal export --format=csv --since=30d > audit-$(date +%Y%m).csv
+```
+
+**Quarterly:**
+- Review access controls
+- Rotate passwords
+- Update security procedures
+- Test incident response
+
+### Compliance Checklist
+
+```
+Before Production Deployment:
+[ ] File permissions set (700 for .chameleon/)
+[ ] Mode password configured (16+ chars)
+[ ] Mode set to readonly
+[ ] DATABASE_URL in environment (not config)
+[ ] .env file gitignored
+[ ] Pre-commit hooks installed
+[ ] Backup strategy implemented
+[ ] Monitoring alerts configured
+[ ] chameleon verify passes
+[ ] No secrets in .chameleon.yml
+[ ] Audit logs working
+[ ] Mode upgrades require password
+[ ] Incident response plan documented
+[ ] Team trained on security procedures
+```
+
+## Incident Response
+
+### Integrity Violation
+
+**Response steps:**
+
+```bash
+# 1. STOP - Halt all migrations immediately
+echo "INCIDENT: Integrity violation detected" | mail -s "URGENT" ops@company.com
+
+# 2. INVESTIGATE
+chameleon verify
+cat .chameleon/vault/integrity.log | tail -50
+ls -la .chameleon/vault/versions/
+ls -la .chameleon/vault/hashes/
+
+# 3. RESTORE from backup
+cp -r /backups/chameleon/vault-latest/ .chameleon/vault/
+
+# 4. VERIFY restoration
+chameleon verify
+
+# 5. REVIEW access logs
+sudo grep "chameleon" /var/log/auth.log
+
+# 6. ROTATE passwords
+chameleon config auth set-password
+
+# 7. DOCUMENT incident
+echo "$(date): Integrity violation - restored from backup" >> incidents.log
+```
+
+### Unauthorized Mode Change
+
+```bash
+# 1. Check who changed mode
+chameleon journal last 50 | grep mode
+
+# 2. Immediately downgrade
+chameleon config set mode=readonly
+
+# 3. Change password
+chameleon config auth set-password
+
+# 4. Review recent migrations
+chameleon journal schema
+
+# 5. Audit for unauthorized changes
+chameleon status
+
+# 6. Document and investigate
+```
+
+### Password Compromise
+
+```bash
+# 1. Immediately rotate password
+chameleon config auth set-password
+
+# 2. Update in all environments
+# - Development
+# - Staging
+# - Production
+# - CI/CD secrets
+
+# 3. Review recent activity
+cat .chameleon/vault/integrity.log | tail -100
+
+# 4. Check for unauthorized migrations
+chameleon journal schema
+
+# 5. Verify vault integrity
+chameleon verify
+```
+
+## Security Hardening
+
+### Operating System Level
+
+**Linux with SELinux:**
+
+```bash
+# Set SELinux context
+semanage fcontext -a -t user_home_t ".chameleon(/.*)?"
+restorecon -Rv .chameleon/
+
+# Verify
+ls -Z .chameleon/
+```
+
+**AppArmor profile:**
+
+```bash
+# /etc/apparmor.d/usr.local.bin.chameleon
+#include <tunables/global>
+
+/usr/local/bin/chameleon {
+  #include <abstractions/base>
+  
+  # Allow read/write to vault
+  owner @{HOME}/.chameleon/** rw,
+  
+  # Deny network access
+  deny network,
+}
+```
+
+### Network Security
+
+**Database connection:**
+
+```yaml
+# Use SSL/TLS
+database:
+  connection_string: "postgresql://user:pass@host:5432/db?sslmode=require"
+```
+
+**Firewall rules:**
+
+```bash
+# Only allow database connection from app server
+sudo ufw allow from APP_IP to DB_IP port 5432
+```
+
+## Summary
+
+<CardGroup cols={2}>
+  <Card title="File Permissions" icon="shield">
+    - 700 for .chameleon/
+    - 600 for auth files
+  </Card>
+  <Card title="Password Management" icon="key">
+    - 16+ character passwords
+    - Rotate quarterly
+    - Use environment variables
+  </Card>
+  <Card title="Mode Strategy" icon="lock">
+    - readonly for production
+    - Time-limited upgrades
+    - Immediate downgrades
+  </Card>
+  <Card title="Monitoring" icon="chart-line">
+    - Watch integrity.log
+    - Alert on violations
+    - Regular audits
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<Card title="Security Overview" icon="shield-check" href="/security/overview">
+  Review the complete security model
+</Card>

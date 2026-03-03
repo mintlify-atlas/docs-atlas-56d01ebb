@@ -1,0 +1,541 @@
+---
+title: 'Error Handling'
+description: 'Handle errors gracefully in the ChameleonDB Go SDK'
+---
+
+## Overview
+
+ChameleonDB provides rich, structured errors with:
+- Specific error types for different failure modes
+- Clear error messages with context
+- Actionable suggestions for resolution
+- Programmatic error inspection via error codes
+
+## Error Categories
+
+### Validation Errors
+
+Occur before SQL generation when input doesn't match schema.
+
+<ResponseField name="ValidationError" type="error">
+  Generic validation failure (field type, length, format)
+</ResponseField>
+
+<ResponseField name="TypeMismatchError" type="error">
+  Value type doesn't match field type definition
+</ResponseField>
+
+<ResponseField name="LengthExceededError" type="error">
+  String value exceeds maximum length
+</ResponseField>
+
+<ResponseField name="FormatError" type="error">
+  Invalid format (e.g., UUID, email, ISO8601)
+</ResponseField>
+
+<ResponseField name="UnknownFieldError" type="error">
+  Field doesn't exist in entity schema
+</ResponseField>
+
+<ResponseField name="UnknownEntityError" type="error">
+  Entity doesn't exist in schema
+</ResponseField>
+
+### Constraint Errors
+
+Occur at database level when constraints are violated.
+
+<ResponseField name="UniqueConstraintError" type="error">
+  Value already exists (UNIQUE constraint violation)
+</ResponseField>
+
+<ResponseField name="NotNullError" type="error">
+  Required field is missing or null
+</ResponseField>
+
+<ResponseField name="ForeignKeyError" type="error">
+  Referenced record doesn't exist
+</ResponseField>
+
+<ResponseField name="ForeignKeyConstraintError" type="error">
+  Cannot delete/update record with dependent records
+</ResponseField>
+
+### Safety Errors
+
+Occur when safety guards prevent potentially dangerous operations.
+
+<ResponseField name="SafetyError" type="error">
+  Operation blocked by safety guard (e.g., UPDATE/DELETE without WHERE)
+</ResponseField>
+
+### Execution Errors
+
+<ResponseField name="NotFoundError" type="error">
+  Record to update/delete doesn't exist
+</ResponseField>
+
+<ResponseField name="ConflictError" type="error">
+  Concurrent modification detected (future: optimistic locking)
+</ResponseField>
+
+## Error Inspection
+
+### Type Assertions
+
+Check for specific error types:
+
+```go
+import (
+    "log"
+    
+    "github.com/chameleon-db/chameleondb/chameleon/pkg/engine/mutation"
+)
+
+result, err := eng.Insert("User").
+    Set("email", "duplicate@mail.com").
+    Execute(ctx)
+
+if err != nil {
+    // Check for unique constraint violation
+    if uniqueErr, ok := err.(*mutation.UniqueConstraintError); ok {
+        log.Printf("Email already exists: %s", uniqueErr.Field)
+        log.Printf("Conflicting record ID: %v", uniqueErr.ConflictingRow["id"])
+        return
+    }
+    
+    // Check for foreign key violation
+    if fkErr, ok := err.(*mutation.ForeignKeyError); ok {
+        log.Printf("Invalid reference: %s", fkErr.Field)
+        log.Printf("Referenced entity: %s", fkErr.ReferencedEntity)
+        return
+    }
+    
+    // Generic error
+    log.Fatal(err)
+}
+```
+
+### Error Codes
+
+Use error codes for programmatic handling:
+
+```go
+import "github.com/chameleon-db/chameleondb/chameleon/pkg/engine/mutation"
+
+_, err := eng.Insert("User").Set("email", "test@mail.com").Execute(ctx)
+
+if err != nil {
+    code := mutation.ErrorCode(err)
+    
+    switch code {
+    case "UNIQUE_CONSTRAINT_VIOLATION":
+        log.Println("Email already exists")
+    case "TYPE_MISMATCH":
+        log.Println("Invalid data type")
+    case "NOT_NULL_VIOLATION":
+        log.Println("Missing required field")
+    case "FOREIGN_KEY_VIOLATION":
+        log.Println("Referenced record doesn't exist")
+    default:
+        log.Printf("Unexpected error: %s", code)
+    }
+}
+```
+
+### Error Helpers
+
+Use helper functions to check error categories:
+
+```go
+import "github.com/chameleon-db/chameleondb/chameleon/pkg/engine/mutation"
+
+_, err := eng.Update("Post").Set("title", "New Title").Execute(ctx)
+
+if err != nil {
+    // Check if it's a safety violation
+    if mutation.IsSafetyError(err) {
+        log.Println("Safety guard triggered - add Filter() clause")
+        return
+    }
+    
+    // Check if it's a constraint error
+    if mutation.IsConstraintError(err) {
+        log.Println("Database constraint violated")
+        return
+    }
+    
+    // Check if it's any mutation error
+    if mutation.IsMutationError(err) {
+        log.Printf("Mutation error: %s", mutation.ErrorCode(err))
+        return
+    }
+}
+```
+
+## Common Error Scenarios
+
+### Unique Constraint Violation
+
+```go
+_, err := eng.Insert("User").
+    Set("id", uuid.New().String()).
+    Set("email", "existing@mail.com").
+    Set("name", "John Doe").
+    Execute(ctx)
+
+if err != nil {
+    if uniqueErr, ok := err.(*mutation.UniqueConstraintError); ok {
+        fmt.Printf(
+            "Email %s is already taken by user %v\n",
+            uniqueErr.Value,
+            uniqueErr.ConflictingRow["id"],
+        )
+        // Suggestion: Use a different email or update the existing user
+    }
+}
+
+// Error message:
+// UniqueConstraintError: Field 'email' must be unique
+//   Value: existing@mail.com
+//   Conflict: User(id=550e8400-e29b-41d4-a716-446655440000) already has this value
+//   Suggestion: Use a different value or update the existing record
+```
+
+### Type Mismatch
+
+```go
+_, err := eng.Insert("User").
+    Set("age", "thirty-five"). // Should be int
+    Execute(ctx)
+
+if err != nil {
+    if typeErr, ok := err.(*mutation.TypeMismatchError); ok {
+        fmt.Printf(
+            "Field %s expects %s but got %s\n",
+            typeErr.Field,
+            typeErr.ExpectedType,
+            typeErr.ReceivedType,
+        )
+        fmt.Printf("Suggestion: %s\n", typeErr.Suggestion)
+    }
+}
+
+// Error message:
+// TypeMismatchError: Field 'age'
+//   Expected type: int
+//   Received type: string (value: "thirty-five")
+//   Suggestion: Use an integer value
+```
+
+### Foreign Key Violation
+
+```go
+_, err := eng.Insert("Post").
+    Set("id", uuid.New().String()).
+    Set("title", "My Post").
+    Set("author_id", "non-existent-uuid"). // User doesn't exist
+    Execute(ctx)
+
+if err != nil {
+    if fkErr, ok := err.(*mutation.ForeignKeyError); ok {
+        fmt.Printf(
+            "Referenced %s with %s=%v does not exist\n",
+            fkErr.ReferencedEntity,
+            fkErr.ReferencedField,
+            fkErr.Value,
+        )
+    }
+}
+
+// Error message:
+// ForeignKeyError: Invalid reference
+//   Field: author_id
+//   Referenced: User(id=non-existent-uuid)
+//   The referenced User does not exist
+//   Suggestion: Create the User first or use a valid user ID
+```
+
+### Safety Guard
+
+```go
+_, err := eng.Update("User").
+    Set("status", "active").
+    Execute(ctx) // No Filter() called!
+
+if err != nil {
+    if safetyErr, ok := err.(*mutation.SafetyError); ok {
+        fmt.Printf("Operation blocked: %s\n", safetyErr.Operation)
+        fmt.Printf("Suggestion: %s\n", safetyErr.Suggestion)
+    }
+}
+
+// Error message:
+// SafetyError: Operation blocked by safety guard
+//   Operation: update_without_filter
+//   Would affect: unknown rows (threshold: 0)
+//   Message: UPDATE without filters is blocked
+//   Suggestion: Add Filter() to specify which records to update
+```
+
+### Not Null Violation
+
+```go
+_, err := eng.Insert("User").
+    Set("id", uuid.New().String()).
+    // Missing required field 'email'
+    Set("name", "John Doe").
+    Execute(ctx)
+
+if err != nil {
+    if notNullErr, ok := err.(*mutation.NotNullError); ok {
+        fmt.Printf("Required field missing: %s\n", notNullErr.Field)
+        fmt.Printf("Suggestion: %s\n", notNullErr.Suggestion)
+    }
+}
+
+// Error message:
+// NotNullError: Field 'email' cannot be null
+//   This field is required
+//   Suggestion: Provide a value for this field
+```
+
+### Unknown Field
+
+```go
+_, err := eng.Insert("User").
+    Set("nonexistent_field", "value").
+    Execute(ctx)
+
+if err != nil {
+    if unknownErr, ok := err.(*mutation.UnknownFieldError); ok {
+        fmt.Printf("Unknown field: %s\n", unknownErr.Field)
+        fmt.Printf("Available fields: %v\n", unknownErr.Available)
+    }
+}
+
+// Error message:
+// UnknownFieldError: Entity 'User' has no field 'nonexistent_field'
+//   Available fields: [id, email, name, age, created_at]
+```
+
+## Best Practices
+
+### 1. Handle Specific Errors First
+
+```go
+result, err := eng.Insert("User").
+    Set("email", email).
+    Set("name", name).
+    Execute(ctx)
+
+if err != nil {
+    // Handle specific errors
+    switch e := err.(type) {
+    case *mutation.UniqueConstraintError:
+        return fmt.Errorf("email already exists")
+    case *mutation.TypeMismatchError:
+        return fmt.Errorf("invalid data type for %s", e.Field)
+    case *mutation.NotNullError:
+        return fmt.Errorf("required field %s is missing", e.Field)
+    default:
+        // Generic fallback
+        return fmt.Errorf("failed to create user: %w", err)
+    }
+}
+```
+
+### 2. Use Error Codes for API Responses
+
+```go
+import (
+    "net/http"
+    "encoding/json"
+    
+    "github.com/chameleon-db/chameleondb/chameleon/pkg/engine/mutation"
+)
+
+func createUserHandler(w http.ResponseWriter, r *http.Request) {
+    // ... parse request ...
+    
+    _, err := eng.Insert("User").
+        Set("email", email).
+        Set("name", name).
+        Execute(r.Context())
+    
+    if err != nil {
+        code := mutation.ErrorCode(err)
+        status := http.StatusBadRequest
+        
+        switch code {
+        case "UNIQUE_CONSTRAINT_VIOLATION":
+            status = http.StatusConflict
+        case "TYPE_MISMATCH":
+            status = http.StatusBadRequest
+        case "NOT_NULL_VIOLATION":
+            status = http.StatusBadRequest
+        default:
+            status = http.StatusInternalServerError
+        }
+        
+        w.WriteHeader(status)
+        json.NewEncoder(w).Encode(map[string]string{
+            "error": err.Error(),
+            "code":  code,
+        })
+        return
+    }
+    
+    w.WriteHeader(http.StatusCreated)
+}
+```
+
+### 3. Log Errors with Context
+
+```go
+import "log/slog"
+
+_, err := eng.Update("Post").
+    Filter("id", "eq", postID).
+    Set("published", true).
+    Execute(ctx)
+
+if err != nil {
+    slog.Error("failed to publish post",
+        "error", err,
+        "code", mutation.ErrorCode(err),
+        "post_id", postID,
+        "is_constraint", mutation.IsConstraintError(err),
+    )
+}
+```
+
+### 4. Provide User-Friendly Messages
+
+```go
+func friendlyErrorMessage(err error) string {
+    switch e := err.(type) {
+    case *mutation.UniqueConstraintError:
+        return fmt.Sprintf("%s is already taken", e.Field)
+    case *mutation.TypeMismatchError:
+        return fmt.Sprintf("%s must be a %s", e.Field, e.ExpectedType)
+    case *mutation.NotNullError:
+        return fmt.Sprintf("%s is required", e.Field)
+    case *mutation.ForeignKeyError:
+        return fmt.Sprintf("Referenced %s does not exist", e.ReferencedEntity)
+    case *mutation.SafetyError:
+        return "Operation blocked for safety reasons"
+    default:
+        return "An unexpected error occurred"
+    }
+}
+```
+
+## Error Reference
+
+### Error Codes
+
+| Code | Error Type | Description |
+|------|------------|-------------|
+| `VALIDATION_ERROR` | ValidationError | Generic validation failure |
+| `TYPE_MISMATCH` | TypeMismatchError | Value type doesn't match field |
+| `LENGTH_EXCEEDED` | LengthExceededError | String too long |
+| `FORMAT_ERROR` | FormatError | Invalid format (UUID, email, etc.) |
+| `UNIQUE_CONSTRAINT_VIOLATION` | UniqueConstraintError | Duplicate value |
+| `NOT_NULL_VIOLATION` | NotNullError | Required field missing |
+| `FOREIGN_KEY_VIOLATION` | ForeignKeyError | Referenced record doesn't exist |
+| `FOREIGN_KEY_CONSTRAINT_VIOLATION` | ForeignKeyConstraintError | Cannot delete record with dependents |
+| `UNKNOWN_FIELD` | UnknownFieldError | Field not in schema |
+| `UNKNOWN_ENTITY` | UnknownEntityError | Entity not in schema |
+| `NOT_FOUND` | NotFoundError | Record not found |
+| `CONFLICT` | ConflictError | Concurrent modification |
+| `SAFETY_VIOLATION` | SafetyError | Safety guard triggered |
+
+## Complete Example
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    
+    "github.com/chameleon-db/chameleondb/chameleon/pkg/engine"
+    "github.com/chameleon-db/chameleondb/chameleon/pkg/engine/mutation"
+    "github.com/google/uuid"
+)
+
+func createUser(eng *engine.Engine, email, name string) error {
+    ctx := context.Background()
+    
+    result, err := eng.Insert("User").
+        Set("id", uuid.New().String()).
+        Set("email", email).
+        Set("name", name).
+        Execute(ctx)
+    
+    if err != nil {
+        // Handle specific errors
+        switch e := err.(type) {
+        case *mutation.UniqueConstraintError:
+            return fmt.Errorf(
+                "email %s is already registered (user %v)",
+                e.Value,
+                e.ConflictingRow["id"],
+            )
+        
+        case *mutation.TypeMismatchError:
+            return fmt.Errorf(
+                "invalid %s: expected %s, got %s",
+                e.Field,
+                e.ExpectedType,
+                e.ReceivedType,
+            )
+        
+        case *mutation.NotNullError:
+            return fmt.Errorf("required field %s is missing", e.Field)
+        
+        case *mutation.UnknownFieldError:
+            return fmt.Errorf(
+                "unknown field %s (valid: %v)",
+                e.Field,
+                e.Available,
+            )
+        
+        default:
+            // Log full error for debugging
+            log.Printf("Unexpected error [%s]: %v", 
+                mutation.ErrorCode(err), err)
+            return fmt.Errorf("failed to create user")
+        }
+    }
+    
+    log.Printf("Created user %v with email %s", result.ID, email)
+    return nil
+}
+
+func main() {
+    eng, _ := engine.NewEngine()
+    defer eng.Close()
+    
+    // ... connect to database ...
+    
+    // This will succeed
+    if err := createUser(eng, "new@mail.com", "New User"); err != nil {
+        log.Println(err)
+    }
+    
+    // This will fail with UniqueConstraintError
+    if err := createUser(eng, "new@mail.com", "Duplicate User"); err != nil {
+        log.Println(err)
+        // Output: email new@mail.com is already registered (user 550e8400-...)
+    }
+}
+```
+
+## See Also
+
+- [Engine](/api/engine) - Initialize and configure the engine
+- [Query Builder](/api/query-builder) - Query data
+- [Mutations](/api/mutations) - Insert, update, and delete data

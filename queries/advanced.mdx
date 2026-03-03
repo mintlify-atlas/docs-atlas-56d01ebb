@@ -1,0 +1,364 @@
+---
+title: Advanced Queries
+description: OrderBy, Limit, Offset, Select, Debug, and combining multiple query features
+---
+
+ChameleonDB supports advanced query operations for sorting, pagination, field projection, and debugging.
+
+## Order By
+
+Sort results by one or more fields:
+
+<CodeGroup>
+```go Go
+users, err := db.Users().
+    OrderBy("created_at", "desc").
+    Execute()
+```
+
+```sql Generated SQL
+SELECT id, email, name, age, created_at
+FROM users
+ORDER BY created_at DESC;
+```
+</CodeGroup>
+
+## Multiple Order Clauses
+
+Chain multiple `OrderBy()` calls for complex sorting:
+
+<CodeGroup>
+```go Go
+users, err := db.Users().
+    OrderBy("name", "asc").
+    OrderBy("created_at", "desc").
+    Execute()
+```
+
+```sql Generated SQL
+SELECT id, email, name, age, created_at
+FROM users
+ORDER BY name ASC, created_at DESC;
+```
+</CodeGroup>
+
+<Tip>
+The order of `OrderBy()` calls matters. The first call is the primary sort, the second is the secondary sort, etc.
+</Tip>
+
+## Limit and Offset
+
+Paginate results using `Limit()` and `Offset()`:
+
+<CodeGroup>
+```go Go
+users, err := db.Users().
+    OrderBy("created_at", "desc").
+    Limit(10).
+    Offset(20).
+    Execute()
+```
+
+```sql Generated SQL
+SELECT id, email, name, age, created_at
+FROM users
+ORDER BY created_at DESC
+LIMIT 10 OFFSET 20;
+```
+</CodeGroup>
+
+<Warning>
+**Best practice:** Always use `OrderBy()` with `Limit()`/`Offset()` to ensure deterministic pagination.
+
+Without ordering, the database may return results in arbitrary order, causing inconsistent pagination.
+</Warning>
+
+## Pagination Example
+
+Implementing cursor-based pagination:
+
+```go
+func GetUsers(page int, pageSize int) ([]User, error) {
+    offset := (page - 1) * pageSize
+    
+    users, err := db.Users().
+        OrderBy("created_at", "desc").
+        OrderBy("id", "asc").  // Secondary sort for consistency
+        Limit(pageSize).
+        Offset(offset).
+        Execute()
+    
+    return users, err
+}
+
+// Usage:
+page1, _ := GetUsers(1, 10)  // First 10 users
+page2, _ := GetUsers(2, 10)  // Next 10 users
+page3, _ := GetUsers(3, 10)  // Next 10 users
+```
+
+## Select (Field Projection)
+
+Select only the fields you need:
+
+<CodeGroup>
+```go Go
+users := db.Query("User").
+    Select("id", "name", "email").
+    Execute(ctx)
+```
+
+```sql Generated SQL
+SELECT id, name, email
+FROM users;
+```
+</CodeGroup>
+
+<Note>
+**Performance:** Field projection reduces memory usage and network transfer. Only select the fields you actually need.
+</Note>
+
+## Debug Mode
+
+See generated SQL and query performance:
+
+<CodeGroup>
+```go Go
+users := db.Query("User").
+    Select("id", "name").
+    Filter("email", "like", "ana").
+    Debug().
+    Execute(ctx)
+```
+
+```plaintext Output
+[SQL] Query User
+SELECT id, name FROM users WHERE email LIKE '%ana%'
+
+[TRACE] Query on User: 2.3ms, 3 rows
+```
+</CodeGroup>
+
+### Debug Output Includes:
+
+- **Generated SQL** - The exact SQL sent to the database
+- **Execution time** - How long the query took
+- **Row count** - Number of rows returned
+
+<Tip>
+Use `.Debug()` during development to understand query performance and verify SQL generation.
+</Tip>
+
+## Combining Everything
+
+A realistic query combining multiple features:
+
+<CodeGroup>
+```go Go
+users, err := db.Users().
+    Filter("age", "gte", 18).
+    Filter("orders.total", "gt", 50).
+    Include("orders").
+    Include("orders.items").
+    OrderBy("created_at", "desc").
+    Limit(10).
+    Execute()
+```
+
+```sql Generated SQL
+-- 1. Main query
+SELECT DISTINCT users.id, users.email, users.name, users.age, users.created_at
+FROM users
+INNER JOIN orders ON orders.user_id = users.id
+WHERE users.age >= 18
+  AND orders.total > 50
+ORDER BY users.created_at DESC
+LIMIT 10;
+
+-- 2. Eager load orders
+SELECT id, total, status, created_at, user_id
+FROM orders
+WHERE user_id IN (...);
+
+-- 3. Eager load order items
+SELECT id, quantity, price, order_id
+FROM order_items
+WHERE order_id IN (...);
+```
+</CodeGroup>
+
+### What This Query Does:
+
+1. Finds users who are 18+ years old
+2. Who have at least one order with total > $50
+3. Loads all their orders (not just the ones > $50)
+4. Loads all items for those orders
+5. Sorts by most recent users first
+6. Returns only the first 10 results
+
+## Complex Filtering Example
+
+```go
+// Find active users aged 25-40 with recent orders
+users, err := db.Users().
+    Filter("status", "eq", "active").
+    Filter("age", "gte", 25).
+    Filter("age", "lte", 40).
+    Filter("orders.created_at", "gte", lastWeek).
+    Include("orders").
+    OrderBy("created_at", "desc").
+    Limit(50).
+    Execute()
+```
+
+## Validation Rules
+
+ChameleonDB validates queries before execution:
+
+| Rule | Error | Solution |
+|------|-------|----------|
+| Pagination without order | `.Limit(10)` without `.OrderBy()` warns | Add `.OrderBy()` |
+| Unknown field | `.Filter("invalid_field", ...)` | Use valid field name |
+| Unknown entity | `db.Products()` (not in schema) | Define entity in schema |
+| Invalid relation | `.Include("invalid.path")` | Use valid relation path |
+| Type mismatch | `.Filter("age", "eq", "string")` | Use correct type |
+
+## Query Performance Tips
+
+<AccordionGroup>
+  <Accordion title="Use field projection" icon="table-columns">
+    Only select the fields you need with `.Select()` to reduce memory and network transfer.
+    
+    ```go
+    // ❌ Loads all fields
+    db.Users().Execute()
+    
+    // ✅ Loads only needed fields
+    db.Users().Select("id", "name", "email").Execute()
+    ```
+  </Accordion>
+  
+  <Accordion title="Use eager loading wisely" icon="bolt">
+    Only include relations you actually need. Each `Include()` triggers an additional query.
+    
+    ```go
+    // ❌ Loads unnecessary data
+    db.Users().
+        Include("orders").
+        Include("orders.items").
+        Include("profile").
+        Include("settings").Execute()
+    
+    // ✅ Only load what you need
+    db.Users().Include("orders").Execute()
+    ```
+  </Accordion>
+  
+  <Accordion title="Always order when paginating" icon="arrow-down-1-9">
+    Without ordering, pagination results may be inconsistent.
+    
+    ```go
+    // ❌ Unpredictable results
+    db.Users().Limit(10).Offset(20).Execute()
+    
+    // ✅ Deterministic pagination
+    db.Users().
+        OrderBy("created_at", "desc").
+        OrderBy("id", "asc").
+        Limit(10).
+        Offset(20).
+        Execute()
+    ```
+  </Accordion>
+  
+  <Accordion title="Use Debug mode to optimize" icon="bug">
+    See the generated SQL to identify performance issues.
+    
+    ```go
+    db.Users().
+        Filter("orders.total", "gt", 100).
+        Include("orders").
+        Debug().  // ← Shows SQL and timing
+        Execute()
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Limitations (v0.1)
+
+These features are **not supported** in the current version:
+
+- Aggregations (`count`, `sum`, `avg`)
+- Group by
+- Subqueries
+- Transactions
+- OR logic (all filters are AND)
+
+<Note>
+These features are planned for future versions. Track progress on [GitHub](https://github.com/chameleon-db/chameleondb).
+</Note>
+
+## Complete Example
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    
+    "github.com/chameleon-db/chameleondb/chameleon/pkg/engine"
+)
+
+func main() {
+    ctx := context.Background()
+    eng, err := engine.NewEngine()
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer eng.Close()
+    
+    // Complex query with all features
+    result, err := eng.Query("User").
+        Select("id", "name", "email", "age").
+        Filter("age", "gte", 18).
+        Filter("status", "eq", "active").
+        Filter("orders.total", "gt", 100).
+        Include("orders").
+        OrderBy("created_at", "desc").
+        Limit(20).
+        Debug().
+        Execute(ctx)
+    
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    // Process results
+    for _, user := range result.Rows {
+        fmt.Printf("User: %s (%d)\n", user["name"], user["age"])
+        
+        if orders, ok := result.Relations["orders"]; ok {
+            fmt.Printf("  Orders: %d\n", len(orders))
+            for _, order := range orders {
+                fmt.Printf("  - Total: $%.2f\n", order["total"])
+            }
+        }
+    }
+}
+```
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Filtering" icon="filter" href="/queries/filtering">
+    Review filter operators (eq, gt, like, in)
+  </Card>
+  <Card title="Relations" icon="diagram-project" href="/queries/relations">
+    Master eager loading with Include()
+  </Card>
+  <Card title="Mutations" icon="pen-to-square" href="/mutations/insert">
+    Learn about Insert, Update, and Delete operations
+  </Card>
+</CardGroup>

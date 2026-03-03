@@ -1,0 +1,529 @@
+---
+title: 'Query Builder'
+description: 'Build and execute type-safe queries with the ChameleonDB Go SDK'
+---
+
+## Overview
+
+The Query Builder provides a chainable API for constructing queries with filtering, relation loading, sorting, pagination, and field selection.
+
+## Basic Usage
+
+### Query()
+
+Starts a new query for the given entity.
+
+```go
+func (e *Engine) Query(entity string) *QueryBuilder
+```
+
+**Example:**
+
+```go
+result, err := eng.Query("User").Execute(ctx)
+if err != nil {
+    log.Fatal(err)
+}
+
+for _, user := range result.Rows {
+    fmt.Printf("User: %s\n", user["name"])
+}
+```
+
+### Execute()
+
+Executes the query and returns results.
+
+```go
+func (qb *QueryBuilder) Execute(ctx context.Context) (*QueryResult, error)
+```
+
+<ParamField path="ctx" type="context.Context" required>
+  Context for query execution (supports cancellation and timeouts)
+</ParamField>
+
+<ResponseField name="QueryResult" type="*QueryResult">
+  Query results containing rows and eager-loaded relations
+</ResponseField>
+
+**QueryResult fields:**
+
+<ResponseField name="Entity" type="string">
+  Name of the entity queried
+</ResponseField>
+
+<ResponseField name="Rows" type="[]Row">
+  Main query results (slice of Row maps)
+</ResponseField>
+
+<ResponseField name="Relations" type="map[string][]Row">
+  Eager-loaded relations (relation name → rows)
+</ResponseField>
+
+## Filtering
+
+### Filter()
+
+Adds a filter condition to the query.
+
+```go
+func (qb *QueryBuilder) Filter(field string, op string, value interface{}) *QueryBuilder
+```
+
+<ParamField path="field" type="string" required>
+  Field name or relation path (e.g., "email", "posts.published")
+</ParamField>
+
+<ParamField path="op" type="string" required>
+  Filter operator: `"eq"`, `"neq"`, `"gt"`, `"gte"`, `"lt"`, `"lte"`, `"like"`, `"in"`
+</ParamField>
+
+<ParamField path="value" type="interface{}" required>
+  Value to compare against (string, int, float64, bool)
+</ParamField>
+
+**Supported operators:**
+
+| Operator | SQL Equivalent | Description |
+|----------|----------------|-------------|
+| `"eq"` | `=` | Equal to |
+| `"neq"` | `!=` | Not equal to |
+| `"gt"` | `>` | Greater than |
+| `"gte"` | `>=` | Greater than or equal |
+| `"lt"` | `<` | Less than |
+| `"lte"` | `<=` | Less than or equal |
+| `"like"` | `LIKE` | Pattern matching (use `%` wildcards) |
+| `"in"` | `IN` | Value in list |
+
+**Examples:**
+
+```go
+// Exact match
+eng.Query("User").
+    Filter("email", "eq", "ana@mail.com").
+    Execute(ctx)
+
+// Pattern matching
+eng.Query("User").
+    Filter("name", "like", "%Garcia%").
+    Execute(ctx)
+
+// Numeric comparison
+eng.Query("User").
+    Filter("age", "gte", 18).
+    Execute(ctx)
+
+// Multiple filters (AND logic)
+eng.Query("Post").
+    Filter("published", "eq", true).
+    Filter("views", "gt", 1000).
+    Execute(ctx)
+// SQL: WHERE published = true AND views > 1000
+```
+
+## Field Selection
+
+### Select()
+
+Specifies which fields to retrieve (partial selection).
+
+```go
+func (qb *QueryBuilder) Select(fields ...string) *QueryBuilder
+```
+
+<ParamField path="fields" type="...string" required>
+  Field names to select (variadic)
+</ParamField>
+
+**Behavior:**
+- If not called, defaults to `SELECT *` (all fields)
+- Reduces data transfer and improves performance
+- Selected fields are available in `result.Rows`
+
+**Examples:**
+
+```go
+// Select specific fields
+users, _ := eng.Query("User").
+    Select("id", "name", "email").
+    Execute(ctx)
+
+for _, user := range users.Rows {
+    // Only id, name, email are available
+    fmt.Printf("%s <%s>\n", user["name"], user["email"])
+}
+
+// Select with filtering
+eng.Query("Post").
+    Select("id", "title", "created_at").
+    Filter("published", "eq", true).
+    Execute(ctx)
+// SQL: SELECT id, title, created_at FROM posts WHERE published = true
+```
+
+## Eager Loading
+
+### Include()
+
+Eager loads related entities (prevents N+1 queries).
+
+```go
+func (qb *QueryBuilder) Include(path string) *QueryBuilder
+```
+
+<ParamField path="path" type="string" required>
+  Relation name or nested path (e.g., "posts", "posts.comments")
+</ParamField>
+
+**Behavior:**
+- Loads relations in separate queries
+- Results available in `result.Relations["relation_name"]`
+- Supports nested includes with dot notation
+- Uses IdentityMap for automatic deduplication
+
+**Examples:**
+
+```go
+// Single relation
+result, _ := eng.Query("User").
+    Include("posts").
+    Execute(ctx)
+
+for _, user := range result.Rows {
+    fmt.Printf("User: %s\n", user["name"])
+    
+    // Access related posts
+    if posts, ok := result.Relations["posts"]; ok {
+        fmt.Printf("  Posts: %d\n", len(posts))
+        for _, post := range posts {
+            fmt.Printf("  - %s\n", post["title"])
+        }
+    }
+}
+
+// Multiple relations
+eng.Query("User").
+    Include("posts").
+    Include("comments").
+    Execute(ctx)
+
+// Nested relations
+eng.Query("User").
+    Include("posts.comments").
+    Execute(ctx)
+// Loads users, their posts, and comments on those posts
+```
+
+## Sorting
+
+### OrderBy()
+
+Adds a sort clause to the query.
+
+```go
+func (qb *QueryBuilder) OrderBy(field string, direction string) *QueryBuilder
+```
+
+<ParamField path="field" type="string" required>
+  Field name to sort by
+</ParamField>
+
+<ParamField path="direction" type="string" required>
+  Sort direction: `"asc"` or `"desc"`
+</ParamField>
+
+**Examples:**
+
+```go
+// Sort ascending
+eng.Query("User").
+    OrderBy("name", "asc").
+    Execute(ctx)
+
+// Sort descending
+eng.Query("Post").
+    OrderBy("created_at", "desc").
+    Execute(ctx)
+
+// Multiple sort fields
+eng.Query("User").
+    OrderBy("last_name", "asc").
+    OrderBy("first_name", "asc").
+    Execute(ctx)
+// SQL: ORDER BY last_name ASC, first_name ASC
+```
+
+## Pagination
+
+### Limit()
+
+Limits the number of results returned.
+
+```go
+func (qb *QueryBuilder) Limit(n uint64) *QueryBuilder
+```
+
+<ParamField path="n" type="uint64" required>
+  Maximum number of rows to return
+</ParamField>
+
+### Offset()
+
+Skips the first N results.
+
+```go
+func (qb *QueryBuilder) Offset(n uint64) *QueryBuilder
+```
+
+<ParamField path="n" type="uint64" required>
+  Number of rows to skip
+</ParamField>
+
+**Examples:**
+
+```go
+// First 10 users
+eng.Query("User").
+    Limit(10).
+    Execute(ctx)
+
+// Page 2 (rows 11-20)
+eng.Query("User").
+    Limit(10).
+    Offset(10).
+    Execute(ctx)
+
+// Pagination helper
+func getPage(eng *engine.Engine, page, pageSize int) (*engine.QueryResult, error) {
+    offset := (page - 1) * pageSize
+    
+    return eng.Query("User").
+        OrderBy("created_at", "desc").
+        Limit(uint64(pageSize)).
+        Offset(uint64(offset)).
+        Execute(context.Background())
+}
+```
+
+## Debug Mode
+
+### Debug()
+
+Enables SQL debug output for this query.
+
+```go
+func (qb *QueryBuilder) Debug() *QueryBuilder
+```
+
+**Output:**
+- Generated SQL query
+- Does not show execution time or row counts (use `DebugTrace()` for that)
+
+**Example:**
+
+```go
+result, _ := eng.Query("User").
+    Filter("email", "like", "%@example.com").
+    Debug().
+    Execute(ctx)
+
+// Output:
+// [SQL]
+// SELECT * FROM users WHERE email LIKE '%@example.com'
+```
+
+### DebugTrace()
+
+Enables full trace output (SQL + timing + row counts).
+
+```go
+func (qb *QueryBuilder) DebugTrace() *QueryBuilder
+```
+
+**Example:**
+
+```go
+eng.Query("User").
+    Select("id", "name").
+    DebugTrace().
+    Execute(ctx)
+
+// Output:
+// ┌─────────────────────────────────────
+// │ Query Trace
+// ├─────────────────────────────────────
+// │ SQL:
+// │   SELECT id, name FROM users
+// │ Duration: 2.3ms
+// │ Rows: 5
+// └─────────────────────────────────────
+```
+
+## Advanced Usage
+
+### Combining All Features
+
+```go
+result, err := eng.Query("Post").
+    Select("id", "title", "published", "created_at").
+    Filter("published", "eq", true).
+    Filter("views", "gte", 100).
+    Include("author").
+    Include("comments").
+    OrderBy("created_at", "desc").
+    Limit(20).
+    Offset(0).
+    Debug().
+    Execute(ctx)
+
+if err != nil {
+    log.Fatal(err)
+}
+
+// Process results
+for _, post := range result.Rows {
+    fmt.Printf("Post: %s (views: %d)\n", 
+        post["title"], post["views"])
+    
+    // Access author
+    if authors, ok := result.Relations["author"]; ok {
+        if len(authors) > 0 {
+            fmt.Printf("  Author: %s\n", authors[0]["name"])
+        }
+    }
+    
+    // Access comments
+    if comments, ok := result.Relations["comments"]; ok {
+        fmt.Printf("  Comments: %d\n", len(comments))
+    }
+}
+```
+
+### Working with Results
+
+```go
+result, _ := eng.Query("User").Execute(ctx)
+
+// Check if empty
+if result.IsEmpty() {
+    fmt.Println("No users found")
+    return
+}
+
+// Count results
+fmt.Printf("Found %d users\n", result.Count())
+
+// Iterate rows
+for i, user := range result.Rows {
+    // Access fields
+    id := user["id"]
+    name := user["name"]
+    email := user["email"]
+    
+    fmt.Printf("%d. %s <%s> (id: %v)\n", i+1, name, email, id)
+}
+
+// Type-safe field access (Row helpers)
+firstUser := result.Rows[0]
+name := firstUser.String("name")      // Returns "" if not found
+age := firstUser.Int("age")            // Returns 0 if not found
+value := firstUser.Get("created_at")   // Returns interface{}
+```
+
+## Query Result Reference
+
+### QueryResult
+
+```go
+type QueryResult struct {
+    Entity    string              // "User"
+    Rows      []Row               // Main results
+    Relations map[string][]Row    // Eager-loaded relations
+}
+```
+
+**Methods:**
+
+<ResponseField name="Count()" type="int">
+  Returns the number of rows in the main result
+</ResponseField>
+
+<ResponseField name="IsEmpty()" type="bool">
+  Returns true if no rows were returned
+</ResponseField>
+
+### Row
+
+```go
+type Row map[string]interface{}
+```
+
+**Methods:**
+
+<ResponseField name="Get(field)" type="interface{}">
+  Returns the raw value of a field
+</ResponseField>
+
+<ResponseField name="String(field)" type="string">
+  Returns the string value of a field (or "" if not found)
+</ResponseField>
+
+<ResponseField name="Int(field)" type="int64">
+  Returns the int64 value of a field (or 0 if not found)
+</ResponseField>
+
+## Complete Example
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    
+    "github.com/chameleon-db/chameleondb/chameleon/pkg/engine"
+)
+
+func main() {
+    ctx := context.Background()
+    
+    eng, _ := engine.NewEngine()
+    defer eng.Close()
+    
+    // ... connect to database ...
+    
+    // Complex query with all features
+    result, err := eng.Query("User").
+        Select("id", "name", "email", "created_at").
+        Filter("status", "eq", "active").
+        Filter("created_at", "gte", "2024-01-01").
+        Include("posts").
+        OrderBy("created_at", "desc").
+        Limit(50).
+        Debug().
+        Execute(ctx)
+    
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    // Process results
+    fmt.Printf("Active users: %d\n\n", result.Count())
+    
+    for _, user := range result.Rows {
+        fmt.Printf("User: %s <%s>\n", 
+            user["name"], user["email"])
+        
+        if posts, ok := result.Relations["posts"]; ok {
+            fmt.Printf("  Posts: %d\n", len(posts))
+        }
+    }
+}
+```
+
+## See Also
+
+- [Engine](/api/engine) - Initialize and configure the engine
+- [Mutations](/api/mutations) - Insert, update, and delete data
+- [Error Handling](/api/error-handling) - Handle query errors

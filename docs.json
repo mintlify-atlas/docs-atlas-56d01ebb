@@ -1,122 +1,134 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "ChameleonDB",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#7C3AED",
+    "light": "#A78BFA",
+    "dark": "#5B21B6"
   },
-  "favicon": "/favicon.svg",
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/chameleon-db/chameleondb"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/chameleon-db/chameleondb"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
             "pages": [
-              "index",
+              "introduction",
               "quickstart",
-              "development"
+              "installation"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "concepts/schema-vault",
+              "concepts/integrity-modes",
+              "concepts/schema-language",
+              "concepts/architecture"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Schema Language",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "schema/entities",
+              "schema/fields-types",
+              "schema/relations",
+              "schema/constraints",
+              "schema/annotations"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Query System",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "queries/overview",
+              "queries/filtering",
+              "queries/relations",
+              "queries/advanced"
+            ]
+          },
+          {
+            "group": "Mutations",
+            "pages": [
+              "mutations/insert",
+              "mutations/update",
+              "mutations/delete",
+              "mutations/safety"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/migrations",
+              "guides/introspection",
+              "guides/mode-management",
+              "guides/debugging"
+            ]
+          },
+          {
+            "group": "Security",
+            "pages": [
+              "security/overview",
+              "security/vault-integrity",
+              "security/mode-enforcement",
+              "security/best-practices"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "CLI Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Commands",
             "pages": [
-              "api-reference/introduction"
+              "cli/overview",
+              "cli/init",
+              "cli/migrate",
+              "cli/validate",
+              "cli/verify",
+              "cli/status",
+              "cli/journal",
+              "cli/config",
+              "cli/introspect"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Go SDK",
+            "pages": [
+              "api/engine",
+              "api/query-builder",
+              "api/mutations",
+              "api/error-handling"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Rust Core",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "api/parser",
+              "api/type-checker",
+              "api/ffi-interface"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

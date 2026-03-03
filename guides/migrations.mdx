@@ -1,0 +1,380 @@
+---
+title: Migration Workflow
+description: Complete guide to ChameleonDB's migration system with Schema Vault integration
+---
+
+ChameleonDB migrations are tightly integrated with the Schema Vault, providing automatic versioning, integrity verification, and a complete audit trail for every schema change.
+
+## Overview
+
+Unlike traditional migration tools, ChameleonDB:
+- Automatically registers schema versions on every migration
+- Verifies integrity before applying changes
+- Enforces mode restrictions (readonly blocks migrations)
+- Maintains an append-only audit trail
+- Enables migration recovery for failed attempts
+
+## Migration Commands
+
+### Check Migration Status
+
+View the current state of your database and schema:
+
+```bash
+chameleon status
+```
+
+**Output:**
+```
+Schema:
+  Current version:  v001
+  Status:          ✓ Up to date
+
+Vault:
+  Versions:        1 registered
+  Integrity:       ✓ OK
+  Mode:            🔒 readonly (locked)
+```
+
+### Preview Changes
+
+Check what changes will be applied without executing them:
+
+```bash
+chameleon migrate
+```
+
+This command:
+- Compares your `schema.cham` with the current database state
+- Shows a diff of detected changes
+- Does NOT apply migrations
+
+### Dry Run (View Generated SQL)
+
+See the exact SQL that will be executed:
+
+```bash
+chameleon migrate --dry-run
+```
+
+**Output:**
+```
+📋 Migration Preview:
+─────────────────────────────────────────────────
+ALTER TABLE users ADD COLUMN age INTEGER;
+CREATE INDEX idx_users_age ON users(age);
+─────────────────────────────────────────────────
+
+💡 This is a dry run. Use --apply to execute.
+```
+
+### Apply Migration
+
+Apply the migration to your database:
+
+```bash
+chameleon migrate --apply
+```
+
+<Tip>
+The first time you run `chameleon migrate --apply`, it automatically initializes the Schema Vault and registers your schema as v001.
+</Tip>
+
+## Complete Migration Workflow
+
+<Steps>
+  <Step title="Modify Your Schema">
+    Edit your `schema.cham` file to add, remove, or modify entities and fields:
+
+    ```go
+    entity User {
+        id: uuid primary,
+        email: string unique,
+        name: string,
+        age: int,  // ← New field
+    }
+    ```
+  </Step>
+
+  <Step title="Validate Schema Syntax">
+    Ensure your schema is syntactically correct:
+
+    ```bash
+    chameleon validate
+    ```
+
+    **Output:**
+    ```
+    ✅ Schema validated successfully
+       Entities: 1 (User)
+       Fields: 4
+    ```
+  </Step>
+
+  <Step title="Preview Migration">
+    Check what changes will be applied:
+
+    ```bash
+    chameleon migrate --dry-run
+    ```
+
+    Review the generated SQL to ensure it matches your intentions.
+  </Step>
+
+  <Step title="Ensure Proper Mode">
+    Migrations are blocked in readonly mode. Upgrade if needed:
+
+    ```bash
+    # Check current mode
+    chameleon config get mode
+
+    # If readonly, upgrade to standard
+    chameleon config set mode=standard
+    🔐 Enter mode password: ****
+    ```
+
+    See [Mode Management](/guides/mode-management) for details.
+  </Step>
+
+  <Step title="Apply Migration">
+    Execute the migration:
+
+    ```bash
+    chameleon migrate --apply
+    ```
+
+    **Output:**
+    ```
+    🔍 Verifying schema integrity...
+       ✓ Current: v001 (3f2a8b9c...)
+       ✓ No tampering detected
+
+    📦 Registering new schema version...
+       ✓ Registered as v002 (hash: 7d4e1c2a...)
+       ✓ Parent: v001
+
+    📋 Applying migration...
+       ✓ ALTER TABLE users ADD COLUMN age INTEGER
+
+    ✅ Migration applied successfully
+    ✅ Schema v002 locked in vault
+    ```
+  </Step>
+
+  <Step title="Verify Integrity">
+    Confirm the migration was recorded correctly:
+
+    ```bash
+    chameleon verify
+    ```
+
+    **Output:**
+    ```
+    🔍 Verifying Schema Vault integrity...
+       ✓ v001: hash verified
+       ✓ v002: hash verified
+    ✅ All versions verified
+    ```
+  </Step>
+</Steps>
+
+## Schema Vault Integration
+
+Every migration creates an immutable version in the vault:
+
+### Vault Structure
+
+```
+.chameleon/vault/
+├── manifest.json       # Current version + history
+├── integrity.log       # Append-only audit trail
+├── versions/
+│   ├── v001.json      # Immutable snapshot
+│   └── v002.json
+└── hashes/
+    ├── v001.hash      # SHA256 verification
+    └── v002.hash
+```
+
+### Version History
+
+View all schema versions:
+
+```bash
+chameleon journal schema
+```
+
+**Output:**
+```
+📖 Schema Version History
+
+v002 (current) ✓
+├─ Hash: 7d4e1c2a...
+├─ Date: 2026-02-20 15:45:00
+├─ Author: dperalta
+├─ Changes: Added age field to User
+└─ Parent: v001
+
+v001
+├─ Hash: 3f2a8b9c...
+├─ Date: 2026-02-20 10:30:00
+├─ Author: dperalta
+├─ Changes: Initial schema
+└─ Parent: none
+```
+
+### Audit Trail
+
+View the complete integrity log:
+
+```bash
+cat .chameleon/vault/integrity.log
+```
+
+## Migration Recovery
+
+If a migration fails midway, ChameleonDB can retry automatically:
+
+```bash
+chameleon migrate --apply
+```
+
+**Output:**
+```
+⚠️  Incomplete migration detected (v002)
+🔄 Attempting recovery...
+✅ Migration completed successfully
+```
+
+## Environment Variables
+
+Set your database connection string:
+
+```bash
+export DATABASE_URL="postgresql://user:password@localhost:5432/mydb"
+```
+
+Alternatively, use a `.env` file:
+
+```bash .env
+DATABASE_URL=postgresql://user:password@localhost:5432/mydb
+```
+
+## Integrity Verification
+
+### Automatic Verification
+
+Every `chameleon migrate` command automatically:
+1. Verifies all schema hashes
+2. Detects tampering
+3. Aborts if integrity violation detected
+
+**Example (tampered vault):**
+```
+❌ INTEGRITY VIOLATION DETECTED
+   • v001.json: hash mismatch
+   🚨 Schema vault has been modified!
+   ❌ Migration aborted for safety
+```
+
+### Manual Verification
+
+Verify vault integrity anytime:
+
+```bash
+chameleon verify
+```
+
+## Common Issues
+
+### "readonly mode: schema modifications blocked"
+
+**Solution:** Upgrade mode to standard or higher:
+
+```bash
+chameleon config auth set-password  # First time only
+chameleon config set mode=standard
+```
+
+### "DATABASE_URL not set"
+
+**Solution:** Set environment variable:
+
+```bash
+export DATABASE_URL="postgresql://user:pass@host:5432/db"
+```
+
+### "integrity violation detected"
+
+**Solution:** Someone modified vault files. Check audit log:
+
+```bash
+cat .chameleon/vault/integrity.log
+```
+
+If changes were unauthorized, restore from backup.
+
+### "vault not initialized"
+
+**Solution:** Run init first:
+
+```bash
+chameleon init
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Always run dry-run first">
+    Preview SQL before applying to catch unexpected changes:
+    ```bash
+    chameleon migrate --dry-run
+    ```
+  </Accordion>
+
+  <Accordion title="Use readonly mode in production">
+    Lock schema changes in production environments:
+    ```bash
+    chameleon config set mode=readonly
+    ```
+  </Accordion>
+
+  <Accordion title="Review version history regularly">
+    Audit schema changes periodically:
+    ```bash
+    chameleon journal schema
+    ```
+  </Accordion>
+
+  <Accordion title="Backup vault before major changes">
+    Create snapshots before risky operations:
+    ```bash
+    cp -r .chameleon/vault .chameleon/vault.backup
+    ```
+  </Accordion>
+
+  <Accordion title="Set DATABASE_URL in .env">
+    Keep connection strings out of version control:
+    ```bash
+    # .env (add to .gitignore)
+    DATABASE_URL=postgresql://...
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Introspection" icon="database" href="/guides/introspection">
+    Generate schema from existing databases
+  </Card>
+  <Card title="Mode Management" icon="shield" href="/guides/mode-management">
+    Control schema change permissions
+  </Card>
+  <Card title="Debugging" icon="bug" href="/guides/debugging">
+    Troubleshoot migrations and queries
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/core-concepts/architecture">
+    Understand the Schema Vault system
+  </Card>
+</CardGroup>

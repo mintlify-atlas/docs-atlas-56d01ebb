@@ -1,0 +1,504 @@
+---
+title: 'chameleon config'
+description: 'Manage configuration and paranoid modes'
+---
+
+## Synopsis
+
+```bash
+chameleon config <subcommand> [args]
+```
+
+Manage ChameleonDB configuration and integrity modes.
+
+## Description
+
+The `config` command manages:
+
+- **Paranoid modes** - Ring-based schema governance (readonly/standard/privileged/emergency)
+- **Mode passwords** - Authentication for mode upgrades
+- **Configuration values** - Project settings
+
+## Subcommands
+
+- [`config get`](#config-get) - Get configuration value
+- [`config set`](#config-set) - Set configuration value (including mode)
+- [`config auth set-password`](#config-auth-set-password) - Set mode password
+
+---
+
+## config get
+
+Get a configuration value.
+
+### Synopsis
+
+```bash
+chameleon config get <key>
+```
+
+### Arguments
+
+<ParamField path="key" type="string" required>
+  Configuration key to retrieve
+  
+  Common keys:
+  - `mode` - Current paranoid mode
+  - `database.driver` - Database driver
+  - `schema.paths` - Schema file paths
+</ParamField>
+
+### Examples
+
+#### Get Current Mode
+
+```bash
+chameleon config get mode
+```
+
+**Output:**
+```
+readonly
+```
+
+#### Get Database Driver
+
+```bash
+chameleon config get database.driver
+```
+
+**Output:**
+```
+postgresql
+```
+
+---
+
+## config set
+
+Set a configuration value.
+
+### Synopsis
+
+```bash
+chameleon config set <key>=<value>
+```
+
+### Arguments
+
+<ParamField path="key=value" type="string" required>
+  Configuration assignment
+  
+  Format: `key=value`
+  
+  Example: `mode=standard`
+</ParamField>
+
+### Examples
+
+#### Upgrade Mode (Requires Password)
+
+```bash
+chameleon config set mode=standard
+```
+
+**Output:**
+```
+🔐 Enter mode password: ********
+✅ Mode upgraded to standard
+```
+
+#### Downgrade Mode (No Password)
+
+```bash
+chameleon config set mode=readonly
+```
+
+**Output:**
+```
+✅ Mode downgraded to readonly
+```
+
+**Note:** Downgrades (to more restrictive modes) don't require a password.
+
+---
+
+## config auth set-password
+
+Set or change the mode password.
+
+### Synopsis
+
+```bash
+chameleon config auth set-password
+```
+
+### Examples
+
+#### Set Password (First Time)
+
+```bash
+chameleon config auth set-password
+```
+
+**Output:**
+```
+Enter new password: ********
+Confirm password: ********
+✅ Mode password configured
+```
+
+#### Change Password
+
+```bash
+chameleon config auth set-password
+```
+
+**Output:**
+```
+Enter current password: ********
+Enter new password: ********
+Confirm password: ********
+✅ Mode password updated
+```
+
+---
+
+## Paranoid Modes
+
+ChameleonDB uses Unix-style protection rings for schema governance:
+
+| Mode | Ring | Schema Changes | Password Required |
+|------|------|----------------|-------------------|
+| **readonly** | R3 | ❌ Blocked | No (default) |
+| **standard** | R2 | ✅ Controlled | Yes (upgrade) |
+| **privileged** | R1 | ✅ Direct | Yes (upgrade) |
+| **emergency** | R0 | ✅ No checks | Yes (upgrade) |
+
+### Mode Descriptions
+
+<ParamField path="readonly" type="mode">
+  **Ring 3** - Production default
+  
+  - Schema modifications blocked
+  - Migrations fail with error
+  - Introspection disabled
+  - No password needed to set (downgrade)
+  
+  **Use case:** Production databases
+</ParamField>
+
+<ParamField path="standard" type="mode">
+  **Ring 2** - Development mode
+  
+  - Schema changes allowed
+  - Migrations validated and logged
+  - Integrity checks enforced
+  - Password required to upgrade from readonly
+  
+  **Use case:** Development teams
+</ParamField>
+
+<ParamField path="privileged" type="mode">
+  **Ring 1** - DBA access
+  
+  - Direct schema changes
+  - Reduced validation
+  - All operations logged
+  - Password required to upgrade
+  
+  **Use case:** Database administrators
+</ParamField>
+
+<ParamField path="emergency" type="mode">
+  **Ring 0** - Emergency recovery
+  
+  - No integrity checks
+  - All operations allowed
+  - Full audit logging
+  - Password required to upgrade
+  
+  **Use case:** Incident recovery only
+</ParamField>
+
+## Mode Workflow
+
+### Initial Setup (After Init)
+
+```bash
+# 1. Initialize project
+chameleon init
+
+# Default mode: readonly
+chameleon config get mode
+# Output: readonly
+
+# 2. Set password (recommended)
+chameleon config auth set-password
+# Enter password: ********
+
+# 3. Upgrade to standard for development
+chameleon config set mode=standard
+# Enter password: ********
+# ✅ Mode upgraded to standard
+
+# 4. Now migrations work
+chameleon migrate --apply
+✓ Migration applied successfully
+```
+
+### Production Deployment
+
+```bash
+# 1. Deploy with readonly mode
+chameleon config set mode=readonly
+✅ Mode downgraded to readonly
+
+# 2. Migrations are blocked
+chameleon migrate --apply
+❌ readonly mode: schema modifications blocked
+
+# 3. Emergency upgrade (requires password)
+chameleon config set mode=standard
+🔐 Enter mode password: ********
+✅ Mode upgraded to standard
+
+# 4. Apply migration
+chameleon migrate --apply
+✓ Migration applied
+
+# 5. Lock again
+chameleon config set mode=readonly
+✅ Mode downgraded to readonly
+```
+
+### Emergency Recovery
+
+```bash
+# Upgrade to emergency mode
+chameleon config set mode=emergency
+🔐 Enter mode password: ********
+⚠️  WARNING: Emergency mode disables safety checks
+✅ Mode upgraded to emergency
+
+# Perform recovery operations
+# ...
+
+# Return to safe mode
+chameleon config set mode=readonly
+✅ Mode downgraded to readonly
+```
+
+## Password Management
+
+### Password Storage
+
+Passwords are hashed and stored in:
+
+```
+.chameleon/config.yml
+```
+
+**Example:**
+```yaml
+auth:
+  mode_password_hash: "$2a$10$abc123..."
+```
+
+### Password Requirements
+
+- Minimum length: 8 characters (recommended: 12+)
+- No complexity requirements (use strong passwords)
+- Stored as bcrypt hash
+
+### Lost Password Recovery
+
+If you lose the mode password:
+
+1. **Option 1: Reset password hash**
+   ```bash
+   # Edit config manually
+   vim .chameleon/config.yml
+   
+   # Remove the auth section:
+   # auth:
+   #   mode_password_hash: "..."
+   
+   # Set new password
+   chameleon config auth set-password
+   ```
+
+2. **Option 2: Use privileged access**
+   
+   Contact DBA or use emergency access if configured.
+
+## Configuration File
+
+Configuration is stored in `.chameleon.yml`:
+
+```yaml
+database:
+  driver: postgresql
+  connection_string: ${DATABASE_URL}
+
+schema:
+  paths:
+    - ./schemas
+  merged_output: .chameleon/state/schema.merged.cham
+
+features:
+  auto_migration: true
+  rollback: true
+  backup_on_migrate: true
+  audit_logging: true
+
+safety:
+  validation: true
+  confirmation: false
+
+auth:
+  mode_password_hash: "$2a$10$..."
+```
+
+### Edit Configuration
+
+Direct editing:
+
+```bash
+vim .chameleon.yml
+```
+
+Or use `config set`:
+
+```bash
+chameleon config set features.backup_on_migrate=false
+```
+
+## Mode Enforcement
+
+### Readonly Mode Blocks
+
+```bash
+# Migrate blocked
+chameleon migrate --apply
+❌ readonly mode: schema modifications blocked
+
+# Introspect blocked
+chameleon introspect postgresql://...
+❌ readonly mode: introspect is blocked
+```
+
+### Standard Mode Allows
+
+```bash
+# Migrate allowed
+chameleon migrate --apply
+✓ Migration applied successfully
+
+# Introspect allowed
+chameleon introspect postgresql://...
+✓ Schema written to schemas/schema.cham
+```
+
+## Troubleshooting
+
+### Wrong Password
+
+```bash
+chameleon config set mode=standard
+```
+
+**Output:**
+```
+🔐 Enter mode password: ********
+❌ Invalid password
+```
+
+**Solution:** Re-enter correct password or reset (see Lost Password Recovery).
+
+### No Password Set
+
+```bash
+chameleon config set mode=standard
+```
+
+**Output:**
+```
+❌ Mode password not set
+   Run: chameleon config auth set-password
+```
+
+**Solution:**
+```bash
+chameleon config auth set-password
+```
+
+### Cannot Read Config
+
+```
+❌ failed to load config: no such file or directory
+```
+
+**Solution:**
+Run from project directory with `.chameleon.yml`:
+
+```bash
+cd /path/to/project
+chameleon config get mode
+```
+
+## Security Best Practices
+
+### 1. Always Set a Password
+
+```bash
+chameleon config auth set-password
+```
+
+Protects against unauthorized mode upgrades.
+
+### 2. Use Readonly in Production
+
+```bash
+chameleon config set mode=readonly
+```
+
+Prevents accidental schema changes.
+
+### 3. Audit Mode Changes
+
+```bash
+chameleon journal last 50 | grep mode
+```
+
+Track who upgraded modes and when.
+
+### 4. Rotate Passwords Regularly
+
+```bash
+chameleon config auth set-password
+```
+
+Change password every 90 days.
+
+### 5. Document Emergency Procedures
+
+Create runbook for mode upgrades:
+
+```markdown
+## Emergency Schema Change
+
+1. Get DBA approval
+2. Upgrade mode: `chameleon config set mode=standard`
+3. Apply migration: `chameleon migrate --apply`
+4. Downgrade mode: `chameleon config set mode=readonly`
+5. Log in incident tracker
+```
+
+## See Also
+
+- [`chameleon status`](/cli/status) - View current mode
+- [`chameleon migrate`](/cli/migrate) - Apply migrations (respects mode)
+- [`chameleon verify`](/cli/verify) - Verify vault integrity
+- [Integrity Modes](/concepts/integrity-modes) - Learn about paranoid modes
+- [Configuration Reference](/configuration/overview) - All config options

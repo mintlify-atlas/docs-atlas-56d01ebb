@@ -1,0 +1,540 @@
+---
+title: 'Mutations'
+description: 'Insert, update, and delete data with the ChameleonDB Go SDK'
+---
+
+## Overview
+
+Mutations provide a type-safe API for modifying data. All mutations include:
+- Three-stage validation (schema → types → constraints)
+- Automatic safety guards (e.g., UPDATE/DELETE requires WHERE clause)
+- Rich error messages with suggestions
+- Debug mode support
+
+## Insert
+
+### Insert()
+
+Starts a new INSERT operation.
+
+```go
+func (e *Engine) Insert(entity string) InsertMutation
+```
+
+<ParamField path="entity" type="string" required>
+  Entity name to insert into (e.g., "User", "Post")
+</ParamField>
+
+### Set()
+
+Adds a field value to insert.
+
+```go
+func (ib *InsertBuilder) Set(field string, value interface{}) InsertMutation
+```
+
+<ParamField path="field" type="string" required>
+  Field name
+</ParamField>
+
+<ParamField path="value" type="interface{}" required>
+  Value to insert (string, int, float64, bool, time.Time, uuid, etc.)
+</ParamField>
+
+### Execute()
+
+Validates and executes the INSERT operation.
+
+```go
+func (ib *InsertBuilder) Execute(ctx context.Context) (*InsertResult, error)
+```
+
+<ResponseField name="InsertResult" type="*InsertResult">
+  Result containing the inserted record
+</ResponseField>
+
+**InsertResult fields:**
+
+<ResponseField name="ID" type="interface{}">
+  Primary key of the inserted record
+</ResponseField>
+
+<ResponseField name="Record" type="map[string]interface{}">
+  Full inserted record (from RETURNING *)
+</ResponseField>
+
+<ResponseField name="Affected" type="int">
+  Number of rows inserted (always 1)
+</ResponseField>
+
+**Examples:**
+
+```go
+import (
+    "context"
+    "log"
+    
+    "github.com/chameleon-db/chameleondb/chameleon/pkg/engine"
+    "github.com/google/uuid"
+)
+
+// Basic insert
+result, err := eng.Insert("User").
+    Set("id", uuid.New().String()).
+    Set("email", "ana@mail.com").
+    Set("name", "Ana Garcia").
+    Execute(ctx)
+
+if err != nil {
+    log.Fatal(err)
+}
+
+fmt.Printf("User created with ID: %v\n", result.ID)
+
+// Access full record
+fmt.Printf("Email: %s\n", result.Record["email"])
+fmt.Printf("Created at: %v\n", result.Record["created_at"])
+```
+
+**With debug:**
+
+```go
+result, err := eng.Insert("Post").
+    Set("id", uuid.New().String()).
+    Set("title", "My First Post").
+    Set("content", "Hello, World!").
+    Set("published", false).
+    Set("author_id", authorID).
+    Debug().
+    Execute(ctx)
+
+// Output:
+// [ENTITY] INSERT INTO Post
+// [SQL] INSERT INTO posts (author_id, content, id, published, title) VALUES ($1, $2, $3, $4, $5) RETURNING *
+// [VALUES] [<uuid> "Hello, World!" <uuid> false "My First Post"]
+```
+
+## Update
+
+### Update()
+
+Starts a new UPDATE operation.
+
+```go
+func (e *Engine) Update(entity string) UpdateMutation
+```
+
+<ParamField path="entity" type="string" required>
+  Entity name to update (e.g., "User", "Post")
+</ParamField>
+
+### Set()
+
+Adds a field to update.
+
+```go
+func (ub *UpdateBuilder) Set(field string, value interface{}) UpdateMutation
+```
+
+<ParamField path="field" type="string" required>
+  Field name to update
+</ParamField>
+
+<ParamField path="value" type="interface{}" required>
+  New value
+</ParamField>
+
+### Filter()
+
+Adds a WHERE condition (required for safety).
+
+```go
+func (ub *UpdateBuilder) Filter(field string, operator string, value interface{}) UpdateMutation
+```
+
+<ParamField path="field" type="string" required>
+  Field name to filter on
+</ParamField>
+
+<ParamField path="operator" type="string" required>
+  Comparison operator: `"eq"`, `"neq"`, `"gt"`, `"gte"`, `"lt"`, `"lte"`, `"like"`
+</ParamField>
+
+<ParamField path="value" type="interface{}" required>
+  Value to compare against
+</ParamField>
+
+### Execute()
+
+Validates and executes the UPDATE operation.
+
+```go
+func (ub *UpdateBuilder) Execute(ctx context.Context) (*UpdateResult, error)
+```
+
+<ResponseField name="UpdateResult" type="*UpdateResult">
+  Result containing updated records
+</ResponseField>
+
+**UpdateResult fields:**
+
+<ResponseField name="Records" type="[]map[string]interface{}">
+  All updated records (from RETURNING *)
+</ResponseField>
+
+<ResponseField name="Affected" type="int">
+  Number of rows updated
+</ResponseField>
+
+**Examples:**
+
+```go
+// Update by ID
+result, err := eng.Update("User").
+    Filter("id", "eq", userID).
+    Set("name", "Ana María Garcia").
+    Execute(ctx)
+
+if err != nil {
+    log.Fatal(err)
+}
+
+fmt.Printf("Updated %d user(s)\n", result.Affected)
+
+// Update multiple fields
+eng.Update("Post").
+    Filter("id", "eq", postID).
+    Set("title", "Updated Title").
+    Set("published", true).
+    Set("updated_at", time.Now()).
+    Execute(ctx)
+
+// Update multiple rows
+result, _ := eng.Update("Post").
+    Filter("author_id", "eq", authorID).
+    Filter("published", "eq", false).
+    Set("published", true).
+    Execute(ctx)
+
+fmt.Printf("Published %d posts\n", result.Affected)
+
+// Access updated records
+for _, record := range result.Records {
+    fmt.Printf("Updated post: %s\n", record["title"])
+}
+```
+
+**Safety guard:**
+
+```go
+// This will FAIL (no Filter called)
+result, err := eng.Update("User").
+    Set("status", "active").
+    Execute(ctx)
+
+// Error: UPDATE without filters is blocked
+```
+
+## Delete
+
+### Delete()
+
+Starts a new DELETE operation.
+
+```go
+func (e *Engine) Delete(entity string) DeleteMutation
+```
+
+<ParamField path="entity" type="string" required>
+  Entity name to delete from (e.g., "User", "Post")
+</ParamField>
+
+### Filter()
+
+Adds a WHERE condition (required for safety).
+
+```go
+func (db *DeleteBuilder) Filter(field string, operator string, value interface{}) DeleteMutation
+```
+
+<ParamField path="field" type="string" required>
+  Field name to filter on
+</ParamField>
+
+<ParamField path="operator" type="string" required>
+  Comparison operator
+</ParamField>
+
+<ParamField path="value" type="interface{}" required>
+  Value to compare against
+</ParamField>
+
+### Execute()
+
+Validates and executes the DELETE operation.
+
+```go
+func (db *DeleteBuilder) Execute(ctx context.Context) (*DeleteResult, error)
+```
+
+<ResponseField name="DeleteResult" type="*DeleteResult">
+  Result containing number of deleted rows
+</ResponseField>
+
+**DeleteResult fields:**
+
+<ResponseField name="Affected" type="int">
+  Number of rows deleted
+</ResponseField>
+
+**Examples:**
+
+```go
+// Delete by ID
+result, err := eng.Delete("Post").
+    Filter("id", "eq", postID).
+    Execute(ctx)
+
+if err != nil {
+    log.Fatal(err)
+}
+
+if result.Affected == 0 {
+    fmt.Println("Post not found")
+} else {
+    fmt.Printf("Deleted %d post(s)\n", result.Affected)
+}
+
+// Delete multiple rows
+result, _ := eng.Delete("Post").
+    Filter("author_id", "eq", authorID).
+    Filter("published", "eq", false).
+    Execute(ctx)
+
+fmt.Printf("Deleted %d draft posts\n", result.Affected)
+
+// Delete with comparison
+eng.Delete("User").
+    Filter("last_login", "lt", "2023-01-01").
+    Execute(ctx)
+```
+
+**Safety guard:**
+
+```go
+// This will FAIL (no Filter called)
+result, err := eng.Delete("Post").
+    Execute(ctx)
+
+// Error: DELETE without filters is blocked
+```
+
+## Debug Mode
+
+### Debug()
+
+Enables SQL debug output for the mutation.
+
+```go
+func (ib *InsertBuilder) Debug() InsertMutation
+func (ub *UpdateBuilder) Debug() UpdateMutation
+func (db *DeleteBuilder) Debug() DeleteMutation
+```
+
+**Examples:**
+
+```go
+// Insert with debug
+eng.Insert("User").
+    Set("email", "test@mail.com").
+    Set("name", "Test User").
+    Debug().
+    Execute(ctx)
+
+// Output:
+// [ENTITY] INSERT INTO User
+// [SQL] INSERT INTO users (email, name) VALUES ($1, $2) RETURNING *
+// [VALUES] ["test@mail.com" "Test User"]
+// [TRACE] INSERT on User: 3.2ms, 1 row
+
+// Update with debug
+eng.Update("Post").
+    Filter("id", "eq", postID).
+    Set("published", true).
+    Debug().
+    Execute(ctx)
+
+// Output:
+// [SQL] UPDATE Post
+// UPDATE posts SET published = $1 WHERE id = $2 RETURNING *
+// [VALUES] [true <uuid>]
+// [TRACE] UPDATE on Post: 2.1ms, 1 row
+```
+
+## Validation
+
+All mutations go through a three-stage validation pipeline:
+
+### 1. Schema Validation
+
+Verifies entity and field names exist in the schema.
+
+```go
+eng.Insert("UnknownEntity").
+    Set("field", "value").
+    Execute(ctx)
+
+// Error: UnknownEntityError: Entity 'UnknownEntity' not found in schema
+//   Available entities: [User, Post, Comment]
+```
+
+### 2. Type Validation
+
+Verifies value types match field definitions.
+
+```go
+eng.Insert("User").
+    Set("age", "not a number").
+    Execute(ctx)
+
+// Error: TypeMismatchError: Field 'age'
+//   Expected type: int
+//   Received type: string (value: "not a number")
+//   Suggestion: Use an integer value
+```
+
+### 3. Constraint Validation
+
+Verifies database constraints (executed at database level).
+
+```go
+eng.Insert("User").
+    Set("email", "existing@mail.com").
+    Execute(ctx)
+
+// Error: UniqueConstraintError: Field 'email' must be unique
+//   Value: existing@mail.com
+//   Conflict: User(id=123) already has this value
+//   Suggestion: Use a different value or update the existing record
+```
+
+## Complete Examples
+
+### Creating Related Records
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    
+    "github.com/chameleon-db/chameleondb/chameleon/pkg/engine"
+    "github.com/google/uuid"
+)
+
+func main() {
+    ctx := context.Background()
+    eng, _ := engine.NewEngine()
+    defer eng.Close()
+    
+    // ... connect to database ...
+    
+    // 1. Create user
+    userResult, err := eng.Insert("User").
+        Set("id", uuid.New().String()).
+        Set("email", "author@mail.com").
+        Set("name", "John Doe").
+        Execute(ctx)
+    
+    if err != nil {
+        log.Fatal(err)
+    }
+    
+    userID := userResult.ID
+    fmt.Printf("Created user: %v\n", userID)
+    
+    // 2. Create posts for user
+    for i := 1; i <= 3; i++ {
+        postResult, err := eng.Insert("Post").
+            Set("id", uuid.New().String()).
+            Set("title", fmt.Sprintf("Post #%d", i)).
+            Set("content", "Content here...").
+            Set("author_id", userID).
+            Set("published", i == 1). // Only first post published
+            Execute(ctx)
+        
+        if err != nil {
+            log.Printf("Failed to create post: %v", err)
+            continue
+        }
+        
+        fmt.Printf("Created post: %v\n", postResult.ID)
+    }
+    
+    // 3. Publish all drafts
+    updateResult, _ := eng.Update("Post").
+        Filter("author_id", "eq", userID).
+        Filter("published", "eq", false).
+        Set("published", true).
+        Execute(ctx)
+    
+    fmt.Printf("Published %d posts\n", updateResult.Affected)
+}
+```
+
+### Conditional Updates
+
+```go
+func incrementViewCount(eng *engine.Engine, postID string) error {
+    // Get current count
+    result, err := eng.Query("Post").
+        Select("views").
+        Filter("id", "eq", postID).
+        Execute(context.Background())
+    
+    if err != nil || result.IsEmpty() {
+        return fmt.Errorf("post not found")
+    }
+    
+    currentViews := result.Rows[0].Int("views")
+    
+    // Update with new count
+    _, err = eng.Update("Post").
+        Filter("id", "eq", postID).
+        Set("views", currentViews+1).
+        Execute(context.Background())
+    
+    return err
+}
+```
+
+### Batch Operations
+
+```go
+func createUsers(eng *engine.Engine, users []map[string]string) error {
+    ctx := context.Background()
+    
+    for _, userData := range users {
+        _, err := eng.Insert("User").
+            Set("id", uuid.New().String()).
+            Set("email", userData["email"]).
+            Set("name", userData["name"]).
+            Execute(ctx)
+        
+        if err != nil {
+            return fmt.Errorf("failed to create user %s: %w", 
+                userData["email"], err)
+        }
+    }
+    
+    return nil
+}
+```
+
+## See Also
+
+- [Engine](/api/engine) - Initialize and configure the engine
+- [Query Builder](/api/query-builder) - Query data
+- [Error Handling](/api/error-handling) - Handle mutation errors

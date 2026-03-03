@@ -1,0 +1,262 @@
+---
+title: Relations & Eager Loading
+description: Load related entities with Include() to avoid N+1 queries
+---
+
+ChameleonDB supports eager loading of related entities using the `Include()` method. This prevents N+1 query problems and efficiently loads related data.
+
+## Eager vs Lazy Loading
+
+<CardGroup cols={2}>
+  <Card title="Eager Loading" icon="bolt">
+    Load relations alongside the main query using `Include()`
+  </Card>
+  <Card title="Lazy Loading" icon="clock">
+    Without `Include()`, relations are **not fetched** automatically
+  </Card>
+</CardGroup>
+
+<Warning>
+**Important:** Without `.Include()`, relations are **not** loaded. You must explicitly request them.
+</Warning>
+
+## Include (Eager Loading)
+
+Load related entities alongside the main query:
+
+<CodeGroup>
+```go Go
+users, err := db.Users().
+    Include("orders").
+    Execute()
+```
+
+```sql Generated SQL
+-- Main query
+SELECT id, email, name, age, created_at
+FROM users;
+
+-- Eager load (separate query, matched by foreign key)
+SELECT id, total, status, created_at, user_id
+FROM orders
+WHERE user_id IN (...);  -- IDs from main query
+```
+</CodeGroup>
+
+<Note>
+**Design choice:** ChameleonDB uses **separate queries** for eager loading (not JOINs) to avoid row duplication and keep results clean.
+</Note>
+
+## Why Separate Queries?
+
+ChameleonDB uses separate queries instead of JOINs for eager loading because:
+
+1. **No row duplication** - JOINs duplicate parent rows for each child
+2. **Cleaner results** - Each entity appears exactly once
+3. **Better performance** - For one-to-many relations, separate queries can be faster
+4. **Simpler result mapping** - No need to deduplicate or group rows
+
+## Nested Include
+
+Load relations multiple levels deep:
+
+<CodeGroup>
+```go Go
+users, err := db.Users().
+    Include("orders").
+    Include("orders.items").
+    Execute()
+```
+
+```sql Generated SQL
+-- 1. Main query
+SELECT id, email, name, age, created_at
+FROM users;
+
+-- 2. Load orders
+SELECT id, total, status, created_at, user_id
+FROM orders
+WHERE user_id IN (...);
+
+-- 3. Load order items
+SELECT id, quantity, price, order_id
+FROM order_items
+WHERE order_id IN (...);  -- IDs from orders query
+```
+</CodeGroup>
+
+<Tip>
+You can chain as many nested includes as needed. Each level triggers a separate query.
+</Tip>
+
+## IdentityMap Deduplication
+
+ChameleonDB automatically deduplicates objects in memory using an **IdentityMap**:
+
+<CodeGroup>
+```go Without IdentityMap (wasteful)
+// If User has 100 posts, User object is duplicated 100 times in memory
+// Memory: ~100x duplication
+```
+
+```go With IdentityMap (efficient)
+result := db.Query("User").
+    Include("posts").
+    Execute(ctx)
+
+// User object appears only once
+// All 100 posts reference the same User instance
+// Memory savings: ~99% for large result sets
+```
+</CodeGroup>
+
+### How IdentityMap Works
+
+1. When loading related data, ChameleonDB tracks entities by their primary key
+2. If the same entity appears multiple times, only **one instance** is kept in memory
+3. All references point to the **same object**
+4. This dramatically reduces memory usage for large result sets
+
+<Note>
+**Performance:** IdentityMap is enabled by default and requires no configuration. It's especially beneficial when loading many-to-one or many-to-many relationships.
+</Note>
+
+## Query with Relations
+
+Example using the Go SDK:
+
+```go
+// Query users with their posts
+result, err := eng.Query("User").
+    Select("id", "name", "email").
+    Include("posts").
+    Execute(ctx)
+
+if err != nil {
+    log.Fatal(err)
+}
+
+for _, user := range result.Rows {
+    fmt.Printf("User: %s\n", user["name"])
+    
+    if posts, ok := result.Relations["posts"]; ok {
+        fmt.Printf("  Posts: %d\n", len(posts))
+        for _, post := range posts {
+            fmt.Printf("  - %s\n", post["title"])
+        }
+    }
+}
+```
+
+## Filter on Related Entity
+
+Filter the main entity based on a condition on a related entity. This is different from filtering the included results:
+
+<CodeGroup>
+```go Go
+users, err := db.Users().
+    Filter("orders.total", "gt", 100).
+    Execute()
+```
+
+```sql Generated SQL
+SELECT DISTINCT users.id, users.email, users.name, users.age, users.created_at
+FROM users
+INNER JOIN orders ON orders.user_id = users.id
+WHERE orders.total > 100;
+```
+</CodeGroup>
+
+<Warning>
+When filtering on a relation, ChameleonDB uses a **JOIN** automatically. `DISTINCT` is added to avoid duplicates when a user has multiple matching orders.
+</Warning>
+
+## Filter + Include Combined
+
+You can filter on a relation and also include it. The filter affects **which users** are returned; the include loads **all their orders** (not just matching ones):
+
+<CodeGroup>
+```go Go
+users, err := db.Users().
+    Filter("orders.total", "gt", 100).
+    Include("orders").
+    Execute()
+```
+
+```sql Generated SQL
+-- 1. Main query (filtered via JOIN)
+SELECT DISTINCT users.id, users.email, users.name, users.age, users.created_at
+FROM users
+INNER JOIN orders ON orders.user_id = users.id
+WHERE orders.total > 100;
+
+-- 2. Eager load ALL orders for matched users
+SELECT id, total, status, created_at, user_id
+FROM orders
+WHERE user_id IN (...);
+```
+</CodeGroup>
+
+<Note>
+**Key distinction:**
+- The **filter** determines which users have at least one order > 100
+- The **include** loads **all orders** for those users (including orders ≤ 100)
+</Note>
+
+## N+1 Query Problem
+
+<Warning>
+**Without eager loading**, you risk the N+1 query problem:
+
+```go
+// ❌ Bad: N+1 queries (1 for users + N for each user's orders)
+users := db.Users().Execute()
+for _, user := range users {
+    orders := db.Orders().Filter("user_id", "eq", user.ID).Execute()
+    // Separate query for EACH user!
+}
+
+// ✅ Good: 2 queries total (1 for users + 1 for all orders)
+users := db.Users().Include("orders").Execute()
+```
+</Warning>
+
+## Accessing Related Data
+
+When you include relations, they're available in the result:
+
+```go
+result, err := db.Query("User").
+    Include("orders").
+    Include("orders.items").
+    Execute(ctx)
+
+// Access main entities
+for _, user := range result.Rows {
+    fmt.Printf("User: %s\n", user["name"])
+}
+
+// Access related data
+if orders, ok := result.Relations["orders"]; ok {
+    for _, order := range orders {
+        fmt.Printf("Order: %v\n", order["total"])
+    }
+}
+
+if items, ok := result.Relations["orders.items"]; ok {
+    for _, item := range items {
+        fmt.Printf("Item: %v\n", item["quantity"])
+    }
+}
+```
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Filtering" icon="filter" href="/queries/filtering">
+    Learn about filter operators (eq, gt, like, in)
+  </Card>
+  <Card title="Advanced Queries" icon="wand-magic-sparkles" href="/queries/advanced">
+    OrderBy, Limit, Offset, and complex queries
+  </Card>
+</CardGroup>

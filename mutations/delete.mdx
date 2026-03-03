@@ -1,0 +1,514 @@
+---
+title: Delete Operations
+description: Remove records safely with WHERE clause requirements
+---
+
+## Overview
+
+Delete operations in ChameleonDB remove records from your database with built-in safety guards. Like updates, **all deletes require a WHERE clause** to prevent accidental data loss.
+
+<Warning>
+**Safety First**: ChameleonDB requires a `Filter()` clause for all deletes. Attempting to delete without a filter will result in a `SafetyError`.
+
+This prevents catastrophic mistakes like:
+```go
+// This will FAIL (no WHERE clause)
+db.Delete("User").
+    Execute(ctx)
+
+// Error: SafetyError: DELETE requires a WHERE clause
+//        Suggestion: Use Filter() or ForceDeleteAll()
+```
+</Warning>
+
+## Basic Delete
+
+Delete a single record by ID:
+
+```go
+import (
+    "context"
+    "github.com/chameleon-db/chameleondb/chameleon/pkg/engine"
+)
+
+ctx := context.Background()
+
+result, err := eng.Delete("User").
+    Filter("id", "eq", userID).
+    Execute(ctx)
+
+if err != nil {
+    log.Fatal(err)
+}
+
+fmt.Printf("Deleted %d rows\n", result.Affected)
+```
+
+## Delete with Multiple Filters
+
+Use complex criteria to target specific records:
+
+```go
+// Delete all unpublished posts older than 30 days
+result, err := eng.Delete("Post").
+    Filter("published", "eq", false).
+    Filter("created_at", "lt", "2024-01-01").
+    Execute(ctx)
+
+fmt.Printf("Deleted %d old drafts\n", result.Affected)
+```
+
+## Delete Result
+
+The `DeleteResult` type shows how many records were removed:
+
+```go
+type DeleteResult struct {
+    Affected int // Number of rows deleted
+}
+
+result, err := eng.Delete("User").
+    Filter("email", "eq", "user@mail.com").
+    Execute(ctx)
+
+if err != nil {
+    log.Fatal(err)
+}
+
+if result.Affected == 0 {
+    fmt.Println("No records matched the filter")
+} else {
+    fmt.Printf("Deleted %d record(s)\n", result.Affected)
+}
+```
+
+## Repository Pattern
+
+Recommended pattern for encapsulating delete operations:
+
+```go
+package repository
+
+import (
+    "context"
+    "fmt"
+    "github.com/chameleon-db/chameleondb/chameleon/pkg/engine"
+)
+
+type UserRepository struct {
+    eng *engine.Engine
+}
+
+func (r *UserRepository) DeleteByID(ctx context.Context, id string) (int, error) {
+    result, err := r.eng.Delete("User").
+        Filter("id", "eq", id).
+        Execute(ctx)
+    
+    if err != nil {
+        return 0, err
+    }
+    
+    return result.Affected, nil
+}
+
+func (r *UserRepository) DeleteInactive(ctx context.Context, beforeDate string) (int, error) {
+    result, err := r.eng.Delete("User").
+        Filter("last_login", "lt", beforeDate).
+        Filter("status", "eq", "inactive").
+        Execute(ctx)
+    
+    if err != nil {
+        return 0, err
+    }
+    
+    return result.Affected, nil
+}
+```
+
+## Foreign Key Handling
+
+When deleting records with relationships, be aware of foreign key constraints:
+
+### Cascade Deletes
+
+If your schema defines cascade deletes, related records are removed automatically:
+
+```go
+// Schema:
+// entity Post {
+//     author_id: uuid references User on_delete cascade,
+// }
+
+// Deleting a user automatically deletes their posts
+result, err := eng.Delete("User").
+    Filter("id", "eq", userID).
+    Execute(ctx)
+
+// Both user AND all their posts are deleted
+```
+
+### Restrict Deletes
+
+If relationships use `on_delete restrict`, you must delete children first:
+
+```go
+// Schema:
+// entity Post {
+//     author_id: uuid references User on_delete restrict,
+// }
+
+// This will FAIL if user has posts
+result, err := eng.Delete("User").
+    Filter("id", "eq", userID).
+    Execute(ctx)
+
+// Error: ForeignKeyError: Cannot delete User
+//        User has existing Posts that reference it
+//        Suggestion: Delete related Posts first or use CASCADE
+
+// Correct approach: Delete posts first
+_, err := eng.Delete("Post").
+    Filter("author_id", "eq", userID).
+    Execute(ctx)
+
+// Then delete user
+result, err := eng.Delete("User").
+    Filter("id", "eq", userID).
+    Execute(ctx)
+```
+
+## Error Handling
+
+```go
+import "errors"
+
+result, err := eng.Delete("User").
+    Filter("id", "eq", userID).
+    Execute(ctx)
+
+if err != nil {
+    var fkErr *engine.ForeignKeyError
+    if errors.As(err, &fkErr) {
+        // User has related records that prevent deletion
+        return fmt.Errorf("cannot delete: user has existing posts: %w", err)
+    }
+    
+    var safetyErr *engine.SafetyError
+    if errors.As(err, &safetyErr) {
+        // Missing WHERE clause
+        return fmt.Errorf("delete requires filter: %w", err)
+    }
+    
+    return fmt.Errorf("delete failed: %w", err)
+}
+
+if result.Affected == 0 {
+    return fmt.Errorf("user not found: %s", userID)
+}
+```
+
+## Debug Mode
+
+Inspect generated SQL with `.Debug()`:
+
+```go
+result, err := eng.Delete("User").
+    Filter("id", "eq", userID).
+    Debug(). // Shows SQL and arguments
+    Execute(ctx)
+
+// Output:
+// [SQL] Delete User
+// DELETE FROM users WHERE id = $1
+// [ARGS] [550e8400-e29b-41d4-a716-446655440000]
+// [TRACE] Delete on User: 0.8ms, 1 rows affected
+```
+
+## Full-Table Delete (Use with Extreme Caution)
+
+If you genuinely need to delete all records in a table, use `ForceDeleteAll()`:
+
+```go
+// Delete ALL users (requires explicit confirmation)
+result, err := eng.Delete("User").
+    ForceDeleteAll(). // Explicitly bypass safety check
+    Execute(ctx)
+
+if err != nil {
+    log.Fatal(err)
+}
+
+fmt.Printf("Deleted all %d users\n", result.Affected)
+```
+
+<Warning>
+**EXTREMELY DANGEROUS**: `ForceDeleteAll()` bypasses the safety guard and deletes **every record** in the table. This is **irreversible**.
+
+Only use this when:
+- You're in a development/test environment
+- You have complete backups
+- You absolutely understand the consequences
+- You've tested the operation thoroughly
+
+**NEVER** use `ForceDeleteAll()` in production without:
+- Multiple levels of approval
+- Database backups verified within the last hour
+- A tested rollback plan
+</Warning>
+
+## Best Practices
+
+### Always Verify Before Delete
+
+```go
+// Good: Check record exists before deleting
+func (r *UserRepository) DeleteByID(ctx context.Context, id string) error {
+    // First, verify the user exists
+    user, err := r.GetByID(ctx, id)
+    if err != nil {
+        return err
+    }
+    if user == nil {
+        return fmt.Errorf("user not found")
+    }
+    
+    // Then delete
+    result, err := r.eng.Delete("User").
+        Filter("id", "eq", id).
+        Execute(ctx)
+    
+    if err != nil {
+        return err
+    }
+    
+    if result.Affected == 0 {
+        return fmt.Errorf("delete failed: user not found")
+    }
+    
+    return nil
+}
+```
+
+### Use Soft Deletes for Important Data
+
+```go
+// Instead of hard delete, mark as deleted
+func (r *UserRepository) SoftDelete(ctx context.Context, id string) error {
+    result, err := r.eng.Update("User").
+        Filter("id", "eq", id).
+        Set("deleted_at", time.Now()).
+        Set("active", false).
+        Execute(ctx)
+    
+    if err != nil {
+        return err
+    }
+    
+    if result.Affected == 0 {
+        return fmt.Errorf("user not found")
+    }
+    
+    return nil
+}
+
+// Filter out soft-deleted records in queries
+func (r *UserRepository) ListActive(ctx context.Context) ([]map[string]interface{}, error) {
+    result, err := r.eng.Query("User").
+        Filter("deleted_at", "eq", nil). // Only non-deleted
+        Execute(ctx)
+    
+    if err != nil {
+        return nil, err
+    }
+    
+    return result.Rows, nil
+}
+```
+
+### Check Affected Count
+
+```go
+result, err := eng.Delete("User").
+    Filter("id", "eq", userID).
+    Execute(ctx)
+
+if err != nil {
+    return err
+}
+
+if result.Affected == 0 {
+    return fmt.Errorf("user not found: %s", userID)
+}
+
+if result.Affected > 1 {
+    log.Printf("Warning: Deleted %d users (expected 1)", result.Affected)
+}
+```
+
+### Handle Cascading Deletes Carefully
+
+```go
+// Document cascade behavior clearly
+func (r *UserRepository) DeleteWithPosts(ctx context.Context, id string) error {
+    // This will delete the user AND all their posts (cascade)
+    result, err := r.eng.Delete("User").
+        Filter("id", "eq", id).
+        Execute(ctx)
+    
+    if err != nil {
+        return err
+    }
+    
+    if result.Affected == 0 {
+        return fmt.Errorf("user not found")
+    }
+    
+    log.Printf("Deleted user %s and all associated posts", id)
+    return nil
+}
+```
+
+## Common Patterns
+
+### Bulk Delete by Criteria
+
+```go
+// Delete all spam posts
+result, err := eng.Delete("Post").
+    Filter("status", "eq", "spam").
+    Execute(ctx)
+
+fmt.Printf("Removed %d spam posts\n", result.Affected)
+```
+
+### Delete Old Records
+
+```go
+// Delete sessions older than 30 days
+thirtyDaysAgo := time.Now().AddDate(0, 0, -30)
+
+result, err := eng.Delete("Session").
+    Filter("created_at", "lt", thirtyDaysAgo.Format(time.RFC3339)).
+    Execute(ctx)
+
+fmt.Printf("Cleaned up %d old sessions\n", result.Affected)
+```
+
+### Conditional Delete with Verification
+
+```go
+func (r *UserRepository) DeleteIfInactive(ctx context.Context, id string, threshold time.Time) error {
+    // Only delete if user hasn't logged in since threshold
+    result, err := r.eng.Delete("User").
+        Filter("id", "eq", id).
+        Filter("last_login", "lt", threshold.Format(time.RFC3339)).
+        Execute(ctx)
+    
+    if err != nil {
+        return err
+    }
+    
+    if result.Affected == 0 {
+        return fmt.Errorf("user not found or still active")
+    }
+    
+    return nil
+}
+```
+
+## HTTP Handler Example
+
+```go
+import "net/http"
+
+func deleteUserHandler(w http.ResponseWriter, r *http.Request) {
+    userID := r.URL.Query().Get("id")
+    
+    if userID == "" {
+        http.Error(w, "Missing user ID", http.StatusBadRequest)
+        return
+    }
+    
+    result, err := eng.Delete("User").
+        Filter("id", "eq", userID).
+        Execute(r.Context())
+    
+    if err != nil {
+        var fkErr *engine.ForeignKeyError
+        if errors.As(err, &fkErr) {
+            http.Error(w, "Cannot delete: user has existing posts", http.StatusConflict)
+            return
+        }
+        
+        http.Error(w, "Internal server error", http.StatusInternalServerError)
+        return
+    }
+    
+    if result.Affected == 0 {
+        http.Error(w, "User not found", http.StatusNotFound)
+        return
+    }
+    
+    w.WriteHeader(http.StatusNoContent)
+}
+```
+
+## Use Transactions for Complex Deletes
+
+```go
+// Coming in v1.1
+func (r *UserRepository) DeleteUserAndData(ctx context.Context, id string) error {
+    tx, err := r.eng.BeginTransaction(ctx)
+    if err != nil {
+        return err
+    }
+    defer tx.Rollback()
+    
+    // Delete user's posts
+    _, err = tx.Delete("Post").
+        Filter("author_id", "eq", id).
+        Execute(ctx)
+    if err != nil {
+        return err
+    }
+    
+    // Delete user's comments
+    _, err = tx.Delete("Comment").
+        Filter("user_id", "eq", id).
+        Execute(ctx)
+    if err != nil {
+        return err
+    }
+    
+    // Delete user
+    result, err := tx.Delete("User").
+        Filter("id", "eq", id).
+        Execute(ctx)
+    if err != nil {
+        return err
+    }
+    
+    if result.Affected == 0 {
+        return fmt.Errorf("user not found")
+    }
+    
+    return tx.Commit()
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Safety Guards" icon="shield" href="/mutations/safety">
+    Learn about ChameleonDB's mutation safety features
+  </Card>
+  <Card title="Insert Operations" icon="plus" href="/mutations/insert">
+    Create new records with validation
+  </Card>
+  <Card title="Update Operations" icon="pen" href="/mutations/update">
+    Safely modify existing records
+  </Card>
+  <Card title="Error Handling" icon="triangle-exclamation" href="/api/error-handling">
+    Complete error handling reference
+  </Card>
+</CardGroup>

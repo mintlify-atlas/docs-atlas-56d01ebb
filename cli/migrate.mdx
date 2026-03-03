@@ -1,0 +1,403 @@
+---
+title: 'chameleon migrate'
+description: 'Generate and apply database migrations'
+---
+
+## Synopsis
+
+```bash
+chameleon migrate [flags]
+```
+
+Generate, validate, or apply database migrations from schema files.
+
+## Description
+
+The `migrate` command:
+
+1. **Verifies Schema Vault integrity** - Checks all version hashes
+2. **Checks paranoid mode** - Ensures schema changes are allowed
+3. **Loads and merges schemas** - Combines all `.cham` files from configured paths
+4. **Detects changes** - Compares merged schema with current vault version
+5. **Generates migration SQL** - Creates DDL statements
+6. **Registers new version** - Creates immutable snapshot in vault (if `--apply`)
+7. **Applies migration** - Executes SQL against database (if `--apply`)
+8. **Updates state** - Records migration in manifest and journal
+
+By default, runs in check mode (shows pending migrations without applying).
+
+## Flags
+
+<ParamField path="--check" type="boolean" default="true">
+  Check for pending migrations without applying (default behavior)
+  
+  ```bash
+  chameleon migrate --check
+  chameleon migrate  # same as --check
+  ```
+</ParamField>
+
+<ParamField path="--dry-run" type="boolean" default="false">
+  Preview migration SQL without applying to database
+  
+  ```bash
+  chameleon migrate --dry-run
+  ```
+  
+  Shows:
+  - Schema changes summary
+  - Generated SQL
+  - Does NOT register version or apply migration
+</ParamField>
+
+<ParamField path="--apply" type="boolean" default="false">
+  Apply migration to database
+  
+  ```bash
+  chameleon migrate --apply
+  ```
+  
+  - Registers new schema version in vault
+  - Executes migration SQL
+  - Updates state and journal
+  - Creates backup (if enabled in config)
+</ParamField>
+
+## Environment Variables
+
+<ParamField path="DATABASE_URL" type="string" required>
+  PostgreSQL connection string
+  
+  ```bash
+  export DATABASE_URL="postgresql://user:password@localhost:5432/dbname"
+  ```
+</ParamField>
+
+<ParamField path="USER" type="string">
+  Used as author name for schema versions. Defaults to "unknown" if not set.
+</ParamField>
+
+## Examples
+
+### Check for Pending Migrations
+
+```bash
+chameleon migrate
+```
+
+**Output (no changes):**
+```
+ℹ Loading configuration...
+✓ Configuration loaded from .chameleon.yml
+ℹ Verifying schema integrity...
+✓ Current version: v001 (3f2a8b9c...)
+ℹ Paranoid Mode active: standard
+ℹ Loading schemas from: [./schemas]
+✓ Found 1 schema file(s): [example.cham]
+✓ Schema loaded and validated
+ℹ No schema changes detected
+
+✓ Schema is up to date
+```
+
+**Output (changes detected):**
+```
+ℹ Schema changes detected: Added age field to User
+ℹ Generating migration SQL...
+✓ Migration SQL generated
+
+─────────────────────────────────────────────────
+Migration SQL:
+─────────────────────────────────────────────────
+ALTER TABLE users ADD COLUMN age INTEGER;
+─────────────────────────────────────────────────
+
+ℹ Dry-run mode. Use --apply to execute migration.
+```
+
+### Preview Migration SQL
+
+```bash
+chameleon migrate --dry-run
+```
+
+**Output:**
+```
+✓ Configuration loaded from .chameleon.yml
+✓ Current version: v001 (3f2a8b9c...)
+ℹ Paranoid Mode active: standard
+✓ Found 2 schema file(s): [users.cham posts.cham]
+✓ Schema loaded and validated
+ℹ Schema changes detected: Added Post entity
+ℹ Generating migration SQL...
+✓ Migration SQL generated
+
+─────────────────────────────────────────────────
+Migration SQL:
+─────────────────────────────────────────────────
+CREATE TABLE posts (
+    id UUID PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    content TEXT,
+    author_id UUID REFERENCES users(id),
+    created_at TIMESTAMP DEFAULT NOW()
+);
+─────────────────────────────────────────────────
+
+ℹ Dry-run mode. Use --apply to execute migration.
+```
+
+### Apply Migration
+
+```bash
+chameleon migrate --apply
+```
+
+**Output:**
+```
+ℹ Loading configuration...
+✓ Configuration loaded from .chameleon.yml
+ℹ Verifying schema integrity...
+✓ Current version: v001 (3f2a8b9c...)
+ℹ Paranoid Mode active: standard
+ℹ Loading schemas from: [./schemas]
+✓ Found 1 schema file(s): [users.cham]
+✓ Schema loaded and validated
+ℹ Schema changes detected: Added email index
+ℹ Generating migration SQL...
+✓ Migration SQL generated
+
+─────────────────────────────────────────────────
+Migration SQL:
+─────────────────────────────────────────────────
+CREATE INDEX idx_users_email ON users(email);
+─────────────────────────────────────────────────
+
+ℹ Registering new schema version...
+✓ Registered as v002 (hash: 7d4e1c2a...)
+ℹ Parent version: v001
+ℹ Connecting to database...
+✓ Connected to database
+ℹ Applying migration...
+✓ Migration applied successfully
+ℹ Updating state...
+✓ State updated
+
+✓ Migration completed successfully!
+
+Summary:
+  Version:  v002
+  Hash:     7d4e1c2a3b5f6e8d...
+  Duration: 23ms
+  Status:   applied
+```
+
+## Before Migration
+
+### Schema Files
+
+**schemas/users.cham:**
+```chameleon
+entity User {
+    id: uuid primary,
+    email: string unique,
+    name: string,
+}
+```
+
+### Vault State
+
+```bash
+chameleon journal schema
+```
+
+**Output:**
+```
+📖 Schema Version History
+
+v001 (current) ✓
+├─ Hash: 3f2a8b9c...
+├─ Date: 2026-03-03 10:30:00
+├─ Author: dperalta
+├─ Changes: Initial schema
+└─ Parent: none
+```
+
+## After Migration
+
+### Modified Schema
+
+**schemas/users.cham:**
+```chameleon
+entity User {
+    id: uuid primary,
+    email: string unique,
+    name: string,
+    age: int,  // Added field
+}
+```
+
+### Run Migration
+
+```bash
+chameleon migrate --apply
+```
+
+### Updated Vault State
+
+```bash
+chameleon journal schema
+```
+
+**Output:**
+```
+📖 Schema Version History
+
+v002 (current) ✓
+├─ Hash: 7d4e1c2a...
+├─ Date: 2026-03-03 14:25:00
+├─ Author: dperalta
+├─ Changes: Added age field to User
+└─ Parent: v001
+
+v001
+├─ Hash: 3f2a8b9c...
+├─ Date: 2026-03-03 10:30:00
+├─ Author: dperalta
+├─ Changes: Initial schema
+└─ Parent: none
+```
+
+## Paranoid Mode Behavior
+
+### Readonly Mode (Default)
+
+```bash
+chameleon migrate --apply
+```
+
+**Error:**
+```
+❌ Read Only Paranoid Mode is active - schema modifications are blocked
+
+ℹ To override (not recommended):
+   1. Set mode password: chameleon config auth set-password
+   2. Upgrade paranoid mode: chameleon config set mode=standard
+   3. Fix integrity issues first
+
+❌ readonly mode: schema locked
+```
+
+### Standard Mode
+
+```bash
+# Upgrade mode first
+chameleon config set mode=standard
+
+# Now migrations work
+chameleon migrate --apply
+✓ Migration applied successfully
+```
+
+## Integrity Verification
+
+### Integrity Check Passed
+
+```
+✓ Verifying schema integrity...
+✓ Current version: v002 (7d4e1c2a...)
+ℹ Paranoid Mode active: standard
+```
+
+### Integrity Violation Detected
+
+```
+❌ INTEGRITY VIOLATION DETECTED
+
+  • v001.json: hash mismatch (expected 3f2a8b9c..., got a1b2c3d4...)
+  • v002.hash: file modified or corrupted
+
+❌ Schema vault has been modified!
+Recovery options:
+   1. Run 'chameleon verify' for details
+   2. Check .chameleon/vault/integrity.log
+   3. Contact your DBA
+
+❌ Migration aborted for safety
+```
+
+## Error Handling
+
+### Connection Failure
+
+```
+❌ Failed to connect to database: connection refused
+   
+ℹ Check:
+   - DATABASE_URL is set correctly
+   - Database is running
+   - Network connectivity
+```
+
+### Schema Validation Error
+
+```
+❌ Schema validation failed
+
+Error in users.cham:12
+  12 │     email: strnig unique,
+     │            ^^^^^^
+     │            Unknown type 'strnig'
+
+Help: Did you mean 'string'?
+```
+
+### Migration Execution Error
+
+```
+❌ Migration failed
+❌ failed to execute migration: ERROR: column "age" already exists
+
+ℹ Migration marked as failed in state
+ℹ Run 'chameleon journal errors' to view details
+```
+
+## Migration Retry
+
+If a migration fails, ChameleonDB tracks it:
+
+```bash
+# First attempt (fails)
+chameleon migrate --apply
+❌ Migration failed
+
+# Fix the issue, then retry
+chameleon migrate --apply
+⚠ Schema unchanged, but latest version v002 is not applied to database
+ℹ Retrying migration for v002...
+✓ Migration applied successfully
+```
+
+## Configuration
+
+Migration behavior is controlled by `.chameleon.yml`:
+
+```yaml
+schema:
+  paths:
+    - ./schemas          # Where to find .cham files
+  merged_output: .chameleon/state/schema.merged.cham
+
+features:
+  backup_on_migrate: true  # Create backup before applying
+  auto_migration: true
+  audit_logging: true
+```
+
+## See Also
+
+- [`chameleon init`](/cli/init) - Initialize project
+- [`chameleon verify`](/cli/verify) - Verify vault integrity
+- [`chameleon journal`](/cli/journal) - View migration history
+- [`chameleon status`](/cli/status) - Check current status
+- [Schema Vault](/concepts/schema-vault) - Learn about versioning

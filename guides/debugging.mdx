@@ -1,0 +1,571 @@
+---
+title: Debug Mode and Troubleshooting
+description: Use Debug mode to inspect generated SQL and troubleshoot ChameleonDB queries
+---
+
+ChameleonDB's Debug mode provides visibility into generated SQL queries, execution times, and row counts — essential for performance optimization and troubleshooting.
+
+## Debug Mode Overview
+
+Debug mode outputs:
+- **Generated SQL** — Exact query sent to PostgreSQL
+- **Execution time** — Query duration in milliseconds
+- **Row count** — Number of rows returned
+- **Entity name** — Which entity was queried
+
+<Info>
+Debug mode only affects **query visibility** — it does NOT change query execution or results.
+</Info>
+
+## Enabling Debug Mode
+
+Add `.Debug()` to any query chain:
+
+```go
+result, err := eng.Query("User").
+    Filter("email", "like", "ana").
+    Debug().  // ← Enable debug output
+    Execute(ctx)
+```
+
+**Console output:**
+```
+[SQL] Query User
+SELECT * FROM users WHERE email LIKE '%ana%'
+
+[TRACE] Query on User: 2.3ms, 1 rows
+```
+
+## Debug Output Examples
+
+### Simple Query
+
+```go
+users, err := eng.Query("User").
+    Select("id", "name", "email").
+    Debug().
+    Execute(ctx)
+```
+
+**Output:**
+```
+[SQL] Query User
+SELECT id, name, email FROM users
+
+[TRACE] Query on User: 1.8ms, 5 rows
+```
+
+### Query with Filters
+
+```go
+users, err := eng.Query("User").
+    Filter("age", "gt", 25).
+    Filter("email", "like", "gmail").
+    Debug().
+    Execute(ctx)
+```
+
+**Output:**
+```
+[SQL] Query User
+SELECT * FROM users 
+WHERE age > 25 
+AND email LIKE '%gmail%'
+
+[TRACE] Query on User: 3.1ms, 12 rows
+```
+
+### Query with Relations (Eager Loading)
+
+```go
+users, err := eng.Query("User").
+    Include("posts").
+    Debug().
+    Execute(ctx)
+```
+
+**Output:**
+```
+[SQL] Query User
+SELECT * FROM users
+
+[SQL] Query Post (eager load)
+SELECT * FROM posts WHERE author_id IN (...)
+
+[TRACE] Query on User: 2.1ms, 3 rows
+[TRACE] Eager load posts: 4.5ms, 15 rows
+```
+
+### Query with Field Projection
+
+```go
+users, err := eng.Query("User").
+    Select("id", "name").
+    Filter("created_at", "gt", "2026-01-01").
+    Debug().
+    Execute(ctx)
+```
+
+**Output:**
+```
+[SQL] Query User
+SELECT id, name FROM users 
+WHERE created_at > '2026-01-01'
+
+[TRACE] Query on User: 1.5ms, 8 rows
+```
+
+## Debugging Mutations
+
+Debug mode also works with Insert, Update, and Delete operations:
+
+### Insert with Debug
+
+```go
+result, err := eng.Insert("User").
+    Set("email", "ana@mail.com").
+    Set("name", "Ana Garcia").
+    Debug().
+    Execute(ctx)
+```
+
+**Output:**
+```
+[SQL] Insert User
+INSERT INTO users (email, name) 
+VALUES ('ana@mail.com', 'Ana Garcia') 
+RETURNING id
+
+[TRACE] Insert on User: 3.2ms, 1 row inserted
+```
+
+### Update with Debug
+
+```go
+result, err := eng.Update("User").
+    Filter("id", "eq", userID).
+    Set("name", "Ana Martinez").
+    Debug().
+    Execute(ctx)
+```
+
+**Output:**
+```
+[SQL] Update User
+UPDATE users 
+SET name = 'Ana Martinez' 
+WHERE id = '550e8400-e29b-41d4-a716-446655440000'
+
+[TRACE] Update on User: 2.8ms, 1 row updated
+```
+
+### Delete with Debug
+
+```go
+result, err := eng.Delete("User").
+    Filter("id", "eq", userID).
+    Debug().
+    Execute(ctx)
+```
+
+**Output:**
+```
+[SQL] Delete User
+DELETE FROM users 
+WHERE id = '550e8400-e29b-41d4-a716-446655440000'
+
+[TRACE] Delete on User: 1.9ms, 1 row deleted
+```
+
+## Performance Troubleshooting
+
+### Identifying Slow Queries
+
+Use Debug mode to find performance bottlenecks:
+
+```go
+users, err := eng.Query("User").
+    Include("posts").
+    Include("comments").
+    Debug().
+    Execute(ctx)
+```
+
+**Output:**
+```
+[SQL] Query User
+SELECT * FROM users
+
+[SQL] Query Post (eager load)
+SELECT * FROM posts WHERE author_id IN (...)
+
+[SQL] Query Comment (eager load)
+SELECT * FROM comments WHERE user_id IN (...)
+
+[TRACE] Query on User: 2.1ms, 10 rows
+[TRACE] Eager load posts: 45.3ms, 500 rows  ← Slow!
+[TRACE] Eager load comments: 3.2ms, 50 rows
+```
+
+<Tip>
+If eager loading is slow, consider:
+- Adding database indexes
+- Using field projection (`.Select()`) to reduce data transfer
+- Paginating large result sets
+</Tip>
+
+### Checking Generated SQL
+
+Verify that ChameleonDB generates efficient SQL:
+
+```go
+users, err := eng.Query("User").
+    Filter("age", "gt", 25).
+    Filter("email", "like", "gmail").
+    Select("id", "name").
+    Debug().
+    Execute(ctx)
+```
+
+**Expected efficient SQL:**
+```sql
+SELECT id, name FROM users 
+WHERE age > 25 
+AND email LIKE '%gmail%'
+```
+
+<Check>
+Good signs:
+- WHERE clauses are combined with AND
+- Only requested fields are selected
+- No unnecessary JOINs
+</Check>
+
+### Analyzing N+1 Query Problems
+
+Debug mode helps identify N+1 query issues:
+
+```go
+// ❌ BAD: N+1 queries (without Include)
+users, _ := eng.Query("User").Debug().Execute(ctx)
+for _, user := range users.Rows {
+    // Each iteration triggers a separate query!
+    posts, _ := eng.Query("Post").
+        Filter("author_id", "eq", user["id"]).
+        Debug().
+        Execute(ctx)
+}
+
+// Output shows 1 + N queries:
+// [SQL] Query User (1 query)
+// [SQL] Query Post (1st user)
+// [SQL] Query Post (2nd user)
+// [SQL] Query Post (3rd user)
+// ... (N more queries)
+```
+
+```go
+// ✅ GOOD: Single query with eager loading
+users, _ := eng.Query("User").
+    Include("posts").
+    Debug().
+    Execute(ctx)
+
+// Output shows 2 queries total:
+// [SQL] Query User
+// [SQL] Query Post (eager load) ← Fetches all posts at once
+```
+
+## Debugging Common Issues
+
+### No Rows Returned
+
+```go
+users, err := eng.Query("User").
+    Filter("email", "eq", "nonexistent@mail.com").
+    Debug().
+    Execute(ctx)
+```
+
+**Output:**
+```
+[SQL] Query User
+SELECT * FROM users WHERE email = 'nonexistent@mail.com'
+
+[TRACE] Query on User: 1.2ms, 0 rows  ← No matches
+```
+
+### Filter Not Working
+
+Check the generated SQL to verify filter logic:
+
+```go
+users, err := eng.Query("User").
+    Filter("age", "gte", 18).  // Note: "gte" not "ge"
+    Debug().
+    Execute(ctx)
+```
+
+**Output:**
+```
+[SQL] Query User
+SELECT * FROM users WHERE age >= 18  ← Verify operator
+
+[TRACE] Query on User: 1.8ms, 42 rows
+```
+
+### Relation Not Loading
+
+```go
+users, err := eng.Query("User").
+    Include("posts").
+    Debug().
+    Execute(ctx)
+```
+
+**Output:**
+```
+[SQL] Query User
+SELECT * FROM users
+
+[SQL] Query Post (eager load)
+SELECT * FROM posts WHERE author_id IN (...)  ← Check IDs
+
+[TRACE] Query on User: 2.1ms, 5 rows
+[TRACE] Eager load posts: 3.5ms, 0 rows  ← No posts found
+```
+
+## CLI Debugging Commands
+
+### Verify Schema Integrity
+
+Check for vault tampering:
+
+```bash
+chameleon verify
+```
+
+**Output:**
+```
+🔍 Verifying Schema Vault integrity...
+   ✓ v001: hash verified
+   ✓ v002: hash verified
+✅ All versions verified
+```
+
+### Check Migration Status
+
+See if migrations are pending:
+
+```bash
+chameleon status
+```
+
+**Output:**
+```
+Schema:
+  Current version:  v002
+  Status:          ⚠️  Changes detected
+
+Pending changes:
+  + Added field: User.age (int)
+```
+
+### View Version History
+
+Debug schema evolution:
+
+```bash
+chameleon journal schema
+```
+
+**Output:**
+```
+📖 Schema Version History
+
+v002 (current) ✓
+├─ Hash: 7d4e1c2a...
+├─ Date: 2026-02-20 15:45:00
+├─ Changes: Added age field to User
+└─ Parent: v001
+
+v001
+├─ Hash: 3f2a8b9c...
+├─ Date: 2026-02-20 10:30:00
+├─ Changes: Initial schema
+└─ Parent: none
+```
+
+### Validate Schema
+
+Check for syntax errors:
+
+```bash
+chameleon validate
+```
+
+**Output:**
+```
+✅ Schema validated successfully
+   Entities: 2 (User, Post)
+   Relations: 2
+```
+
+## Debug Mode Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use Debug during development">
+    Enable Debug mode for all queries during active development:
+    ```go
+    eng.Query("User").Debug().Execute(ctx)
+    ```
+  </Accordion>
+
+  <Accordion title="Remove Debug in production">
+    Debug output adds overhead — remove before deploying:
+    ```go
+    // Development
+    eng.Query("User").Debug().Execute(ctx)
+
+    // Production
+    eng.Query("User").Execute(ctx)
+    ```
+  </Accordion>
+
+  <Accordion title="Check execution times">
+    Use TRACE output to identify slow queries:
+    ```
+    [TRACE] Query on User: 245.3ms, 1000 rows  ← Needs optimization
+    ```
+  </Accordion>
+
+  <Accordion title="Verify eager loading">
+    Ensure Include() generates efficient SQL:
+    ```
+    [SQL] Query Post (eager load)
+    SELECT * FROM posts WHERE author_id IN (...)  ← Good
+    ```
+  </Accordion>
+
+  <Accordion title="Compare with EXPLAIN ANALYZE">
+    Use PostgreSQL's EXPLAIN for deeper analysis:
+    ```sql
+    EXPLAIN ANALYZE SELECT * FROM users WHERE age > 25;
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting Checklist
+
+### Query Returns No Results
+
+<Steps>
+  <Step title="Enable Debug mode">
+    ```go
+    eng.Query("User").Filter("email", "eq", "test@mail.com").Debug().Execute(ctx)
+    ```
+  </Step>
+
+  <Step title="Check generated SQL">
+    Verify the WHERE clause is correct:
+    ```
+    [SQL] SELECT * FROM users WHERE email = 'test@mail.com'
+    ```
+  </Step>
+
+  <Step title="Run SQL directly in database">
+    ```bash
+    psql $DATABASE_URL -c "SELECT * FROM users WHERE email = 'test@mail.com';"
+    ```
+  </Step>
+
+  <Step title="Check for typos in entity/field names">
+    ```go
+    // Wrong
+    eng.Query("Users")  // Entity is "User" not "Users"
+
+    // Correct
+    eng.Query("User")
+    ```
+  </Step>
+</Steps>
+
+### Slow Query Performance
+
+<Steps>
+  <Step title="Enable Debug to measure time">
+    ```go
+    eng.Query("User").Include("posts").Debug().Execute(ctx)
+    ```
+  </Step>
+
+  <Step title="Identify slow operations">
+    ```
+    [TRACE] Query on User: 2.1ms, 10 rows
+    [TRACE] Eager load posts: 450.3ms, 5000 rows  ← Problem here
+    ```
+  </Step>
+
+  <Step title="Add database indexes">
+    ```sql
+    CREATE INDEX idx_posts_author_id ON posts(author_id);
+    ```
+  </Step>
+
+  <Step title="Use field projection">
+    Only select needed fields:
+    ```go
+    eng.Query("Post").Select("id", "title").Execute(ctx)
+    ```
+  </Step>
+</Steps>
+
+### Migration Fails
+
+<Steps>
+  <Step title="Check mode restrictions">
+    ```bash
+    chameleon config get mode
+    ```
+
+    If readonly, upgrade:
+    ```bash
+    chameleon config set mode=standard
+    ```
+  </Step>
+
+  <Step title="Verify integrity">
+    ```bash
+    chameleon verify
+    ```
+  </Step>
+
+  <Step title="Check DATABASE_URL">
+    ```bash
+    echo $DATABASE_URL
+    ```
+  </Step>
+
+  <Step title="View detailed error">
+    ```bash
+    chameleon migrate --apply --verbose
+    ```
+  </Step>
+</Steps>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Query Guide" icon="magnifying-glass" href="/api-reference/queries">
+    Learn advanced query patterns
+  </Card>
+  <Card title="Migration Workflow" icon="code-merge" href="/guides/migrations">
+    Master the migration system
+  </Card>
+  <Card title="Performance" icon="gauge-high" href="/advanced/performance">
+    Optimize query performance
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/core-concepts/architecture">
+    Understand system internals
+  </Card>
+</CardGroup>

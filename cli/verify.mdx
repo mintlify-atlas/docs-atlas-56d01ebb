@@ -1,0 +1,386 @@
+---
+title: 'chameleon verify'
+description: 'Verify Schema Vault integrity'
+---
+
+## Synopsis
+
+```bash
+chameleon verify
+```
+
+Run comprehensive integrity checks on the Schema Vault.
+
+## Description
+
+The `verify` command performs cryptographic verification of the Schema Vault to detect:
+
+- **Manifest tampering** - Modified or corrupted manifest.json
+- **Version file tampering** - Modified version snapshots
+- **Hash mismatches** - Schema files that don't match stored hashes
+- **Missing files** - Deleted vault files
+- **Inconsistent state** - Schema files out of sync with versions
+
+This command is used to:
+- Audit vault integrity
+- Detect unauthorized changes
+- Verify schema authenticity
+- Troubleshoot migration issues
+
+## Examples
+
+### All Checks Passed
+
+```bash
+chameleon verify
+```
+
+**Output:**
+```
+🔍 Running Integrity Verification...
+
+Vault:
+
+  ✓ manifest.json is valid
+  ✓ v001 integrity OK
+  ✓ v002 integrity OK
+  ✓ No tampering detected
+
+Schema Files:
+  ✓ schema *.cham exists
+  ✓ Matches v002 hash
+
+✅ All checks passed
+```
+
+### Integrity Violation Detected
+
+```bash
+chameleon verify
+```
+
+**Output:**
+```
+🔍 Running Integrity Verification...
+
+Vault:
+
+  ✓ manifest.json is valid
+  ✓ v001 integrity OK
+  ❌ v002 integrity FAILED
+     Hash mismatch: expected 7d4e1c2a..., got a1b2c3d4...
+
+Schema Files:
+  ✓ schema *.cham exists
+  ⚠️  Modified (not matching v002)
+
+❌ 1 integrity issues found
+
+🔧 Recovery options:
+   • Check integrity.log for audit trail
+   • Review recent changes to vault files
+   • Contact your DBA if tampering is suspected
+```
+
+### No Vault Found
+
+```bash
+chameleon verify
+```
+
+**Output:**
+```
+❌ No vault found
+   Run 'chameleon migrate' to initialize
+```
+
+## What Gets Verified
+
+### 1. Vault Manifest
+
+Checks `.chameleon/vault/manifest.json`:
+- Valid JSON structure
+- Required fields present
+- Current version references exist
+
+### 2. Version Files
+
+For each version in `.chameleon/vault/versions/`:
+- Version file exists (e.g., `v001.json`)
+- Hash file exists (e.g., `.chameleon/vault/hashes/v001.hash`)
+- Computed hash matches stored hash
+
+### 3. Schema Files
+
+Verifies merged schema:
+- Schema file exists at configured path
+- Hash matches current vault version (if applicable)
+
+### 4. Integrity Log
+
+Checks `.chameleon/vault/integrity.log`:
+- File is append-only
+- No suspicious modifications
+
+## Vault Structure
+
+```
+.chameleon/vault/
+├── manifest.json       # Current version + history
+├── integrity.log       # Append-only audit trail
+├── versions/           # Immutable snapshots
+│   ├── v001.json
+│   └── v002.json
+└── hashes/             # SHA256 verification
+    ├── v001.hash
+    └── v002.hash
+```
+
+## Verification Process
+
+### Step 1: Load Manifest
+
+```
+Vault:
+  ✓ manifest.json is valid
+```
+
+### Step 2: Verify Each Version
+
+For each version:
+
+1. Read version file (e.g., `v001.json`)
+2. Compute SHA256 hash of contents
+3. Compare with stored hash in `v001.hash`
+4. Report OK or FAILED
+
+```
+  ✓ v001 integrity OK
+  ✓ v002 integrity OK
+```
+
+### Step 3: Check Tampering
+
+```
+  ✓ No tampering detected
+```
+
+Or if issues found:
+
+```
+  ❌ 2 integrity issues found
+```
+
+### Step 4: Verify Schema Files
+
+Checks if current schema matches vault:
+
+```
+Schema Files:
+  ✓ schema *.cham exists
+  ✓ Matches v002 hash
+```
+
+Or if modified:
+
+```
+Schema Files:
+  ✓ schema *.cham exists
+  ⚠️  Modified (not matching v002)
+```
+
+## Common Scenarios
+
+### After Migration
+
+```bash
+chameleon migrate --apply
+chameleon verify
+```
+
+**Output:**
+```
+✓ v001 integrity OK
+✓ v002 integrity OK (newly created)
+✅ All checks passed
+```
+
+### After Manual Vault Edit
+
+If someone manually edits `.chameleon/vault/versions/v002.json`:
+
+```bash
+chameleon verify
+```
+
+**Output:**
+```
+❌ v002 integrity FAILED
+   Hash mismatch
+
+❌ 1 integrity issues found
+```
+
+### After Schema Edit (Not Yet Migrated)
+
+Edit `schemas/users.cham` but don't migrate:
+
+```bash
+chameleon verify
+```
+
+**Output:**
+```
+✓ v001 integrity OK
+✓ v002 integrity OK
+  
+Schema Files:
+  ✓ schema *.cham exists
+  ⚠️  Modified (not matching v002)
+
+✅ All checks passed
+```
+
+<Note>
+Modified schema files are expected during development. This is not an error until you run `migrate --apply`.
+</Note>
+
+## Integrity Log
+
+View detailed audit trail:
+
+```bash
+cat .chameleon/vault/integrity.log
+```
+
+**Example output:**
+```
+[2026-03-03T10:30:00Z] INIT vault initialized
+[2026-03-03T10:32:15Z] REGISTER v001 hash=3f2a8b9c...
+[2026-03-03T14:25:30Z] REGISTER v002 hash=7d4e1c2a... parent=v001
+[2026-03-03T14:25:31Z] MIGRATE v002 status=applied duration=23ms
+[2026-03-03T15:10:00Z] VERIFY status=ok
+```
+
+## Recovery Options
+
+### If Vault is Corrupted
+
+1. **Check integrity log:**
+   ```bash
+   cat .chameleon/vault/integrity.log
+   ```
+
+2. **Review recent changes:**
+   ```bash
+   git log .chameleon/vault/
+   ```
+
+3. **Restore from backup:**
+   ```bash
+   cp -r .chameleon/backups/vault-2026-03-03/ .chameleon/vault/
+   ```
+
+4. **Contact DBA if tampering suspected**
+
+### If Schema File is Missing
+
+```bash
+# Regenerate merged schema
+chameleon migrate --check
+```
+
+This will recreate `.chameleon/state/schema.merged.cham`.
+
+## Integration with Migrate
+
+The `migrate` command automatically runs integrity verification:
+
+```bash
+chameleon migrate --apply
+```
+
+**Output includes:**
+```
+ℹ Verifying schema integrity...
+✓ Current version: v002 (7d4e1c2a...)
+✓ No tampering detected
+```
+
+If verification fails, migration is aborted:
+
+```
+❌ INTEGRITY VIOLATION DETECTED
+  • v002.json: hash mismatch
+
+❌ Migration aborted for safety
+```
+
+## Exit Codes
+
+- `0` - All integrity checks passed
+- `1` - Integrity violations found or vault not initialized
+
+## Automated Verification
+
+### Daily Cron Job
+
+```bash
+# /etc/cron.daily/chameleon-verify
+#!/bin/bash
+cd /var/app
+chameleon verify || mail -s "Vault integrity failed" admin@example.com
+```
+
+### CI/CD Pipeline
+
+```yaml
+# .github/workflows/verify.yml
+name: Verify Vault
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Daily
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Verify vault
+        run: chameleon verify
+```
+
+## Troubleshooting
+
+### Cannot Load Manifest
+
+```
+❌ Failed to load manifest: no such file or directory
+```
+
+**Solution:**
+Vault not initialized. Run:
+
+```bash
+chameleon migrate
+```
+
+### Permission Denied
+
+```
+❌ Failed to read vault files: permission denied
+```
+
+**Solution:**
+Ensure read permissions:
+
+```bash
+chmod -R u+r .chameleon/vault/
+```
+
+## See Also
+
+- [`chameleon migrate`](/cli/migrate) - Includes automatic verification
+- [`chameleon status`](/cli/status) - Quick vault status check
+- [`chameleon journal`](/cli/journal) - View vault operation history
+- [Schema Vault](/concepts/schema-vault) - Learn about vault design
+- [Integrity Modes](/concepts/integrity-modes) - Paranoid mode protection

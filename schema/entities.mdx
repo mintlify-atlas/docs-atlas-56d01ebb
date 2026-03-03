@@ -1,0 +1,196 @@
+---
+title: "Entities"
+description: "Define entities in ChameleonDB schemas"
+---
+
+Entities are the core building blocks of ChameleonDB schemas. Each entity represents a domain concept with fields, relationships, and constraints.
+
+## Entity Definition
+
+An entity is defined using the `entity` keyword followed by a name and a block containing fields and relations:
+
+```go
+entity User {
+    id: uuid primary,
+    email: string unique,
+    name: string,
+    created_at: timestamp default now(),
+}
+```
+
+## Naming Convention
+
+Entity names should:
+- Start with an uppercase letter
+- Use PascalCase for multi-word names (e.g., `OrderItem`, `UserProfile`)
+- Be singular (e.g., `User` not `Users`)
+- Represent a clear domain concept
+
+```go
+entity User { ... }          // ✓ Good
+entity OrderItem { ... }     // ✓ Good
+entity user { ... }          // ✗ Bad - lowercase
+entity Users { ... }         // ✗ Bad - plural
+```
+
+## Entity Structure
+
+Entities contain three types of members:
+
+### 1. Fields
+Data attributes that define the entity's properties:
+
+```go
+entity Product {
+    id: uuid primary,
+    name: string,
+    price: decimal,
+    stock: int,
+}
+```
+
+### 2. Relations
+Connections to other entities:
+
+```go
+entity Order {
+    id: uuid primary,
+    user_id: uuid,
+    user: User,              // belongs-to relation
+    items: [OrderItem] via order_id,  // has-many relation
+}
+```
+
+### 3. Backend Annotations
+Hints for storage optimization:
+
+```go
+entity User {
+    id: uuid primary,
+    session: string @cache,
+    monthly_spent: decimal @olap,
+}
+```
+
+## Complete Example
+
+Here's a complete multi-entity schema demonstrating all features:
+
+```go
+entity User {
+    id: uuid primary,
+    email: string unique,
+    name: string,
+    age: int nullable,
+    created_at: timestamp default now(),
+    
+    // Relations
+    orders: [Order] via user_id,
+    posts: [Post] via author_id,
+    
+    // Backend optimizations
+    session: string @cache,
+    monthly_spent: decimal @olap,
+}
+
+entity Order {
+    id: uuid primary,
+    total: decimal,
+    status: string,
+    created_at: timestamp default now(),
+    user_id: uuid,
+    
+    // Relations
+    user: User,
+    items: [OrderItem] via order_id,
+}
+
+entity OrderItem {
+    id: uuid primary,
+    quantity: int,
+    price: decimal,
+    order_id: uuid,
+    
+    // Relations
+    order: Order,
+}
+
+entity Post {
+    id: uuid primary,
+    title: string,
+    content: string,
+    author_id: uuid,
+    created_at: timestamp default now(),
+    
+    // Relations
+    author: User,
+}
+```
+
+## Entity Validation
+
+ChameleonDB validates entities at compile time:
+
+<Check>
+**Primary Key Required** - Each entity must have exactly one primary key field
+</Check>
+
+<Check>
+**Unique Names** - Entity names must be unique within a schema
+</Check>
+
+<Check>
+**Valid References** - All relation targets must reference existing entities
+</Check>
+
+<Check>
+**No Circular Ownership** - Entities cannot form circular ownership dependencies
+</Check>
+
+## Best Practices
+
+<Tip>
+**Keep entities focused** - Each entity should represent a single, clear domain concept
+</Tip>
+
+<Tip>
+**Use meaningful names** - Entity names should be immediately understandable by domain experts
+</Tip>
+
+<Tip>
+**Group related fields** - Use comments to organize fields, relations, and annotations
+</Tip>
+
+```go
+entity Product {
+    // Identity
+    id: uuid primary,
+    name: string,
+    
+    // Pricing
+    price: decimal,
+    stock: int,
+    
+    // Backend optimizations
+    views_today: int @cache,
+    monthly_sales: decimal @olap,
+    embedding: vector(384) @vector,
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Field Types" icon="list" href="/schema/fields-types">
+    Learn about supported field types
+  </Card>
+  <Card title="Relations" icon="link" href="/schema/relations">
+    Define relationships between entities
+  </Card>
+  <Card title="Constraints" icon="shield-check" href="/schema/constraints">
+    Add validation and constraints
+  </Card>
+  <Card title="Annotations" icon="at" href="/schema/annotations">
+    Optimize with backend annotations
+  </Card>
+</CardGroup>

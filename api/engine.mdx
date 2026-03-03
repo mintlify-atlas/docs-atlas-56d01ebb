@@ -1,0 +1,401 @@
+---
+title: 'Engine'
+description: 'Initialize and configure the ChameleonDB Go SDK engine'
+---
+
+## Overview
+
+The `Engine` is the main entry point for ChameleonDB. It loads the schema from the Schema Vault, manages database connections, and provides access to query and mutation APIs.
+
+## Initialization
+
+### NewEngine()
+
+Creates a new engine instance with automatic schema loading from the vault.
+
+```go
+func NewEngine() (*Engine, error)
+```
+
+**Behavior:**
+- Loads schema from `.chameleon/state/schema.merged.cham` (or configured path)
+- Verifies vault integrity before loading
+- Returns error if vault is not initialized or integrity check fails
+- Ready to use immediately after creation
+
+**Example:**
+
+```go
+import (
+    "context"
+    "log"
+    
+    "github.com/chameleon-db/chameleondb/chameleon/pkg/engine"
+)
+
+func main() {
+    ctx := context.Background()
+    
+    // Initialize engine (loads schema from vault)
+    eng, err := engine.NewEngine()
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer eng.Close()
+    
+    // Connect to database
+    config := engine.ConnectorConfig{
+        Host:     "localhost",
+        Port:     5432,
+        Database: "mydb",
+        User:     "postgres",
+        Password: "secret",
+    }
+    
+    if err := eng.Connect(ctx, config); err != nil {
+        log.Fatal(err)
+    }
+    
+    // Ready to query and mutate
+    users, _ := eng.Query("User").Execute(ctx)
+    log.Printf("Found %d users\n", users.Count())
+}
+```
+
+## Connection Management
+
+### Connect()
+
+Establishes a connection to the PostgreSQL database.
+
+```go
+func (e *Engine) Connect(ctx context.Context, config ConnectorConfig) error
+```
+
+<ParamField path="ctx" type="context.Context" required>
+  Context for the connection operation
+</ParamField>
+
+<ParamField path="config" type="ConnectorConfig" required>
+  Database connection configuration
+</ParamField>
+
+**ConnectorConfig Fields:**
+
+<ParamField path="Host" type="string" default="localhost">
+  PostgreSQL server hostname
+</ParamField>
+
+<ParamField path="Port" type="int" default="5432">
+  PostgreSQL server port
+</ParamField>
+
+<ParamField path="Database" type="string" required>
+  Database name
+</ParamField>
+
+<ParamField path="User" type="string" required>
+  Database user
+</ParamField>
+
+<ParamField path="Password" type="string">
+  Database password
+</ParamField>
+
+<ParamField path="MaxConns" type="int32" default="10">
+  Maximum number of connections in the pool
+</ParamField>
+
+<ParamField path="MinConns" type="int32" default="2">
+  Minimum number of connections in the pool
+</ParamField>
+
+<ParamField path="MaxIdleTime" type="time.Duration" default="5m">
+  Maximum time a connection can be idle
+</ParamField>
+
+**Example with connection string:**
+
+```go
+import "os"
+
+func connectFromEnv(eng *engine.Engine) error {
+    connStr := os.Getenv("DATABASE_URL")
+    // postgresql://user:password@host:5432/dbname
+    
+    config, err := engine.ParseConnectionString(connStr)
+    if err != nil {
+        return err
+    }
+    
+    return eng.Connect(context.Background(), config)
+}
+```
+
+### Close()
+
+Closes the database connection pool.
+
+```go
+func (e *Engine) Close()
+```
+
+**Example:**
+
+```go
+eng, _ := engine.NewEngine()
+defer eng.Close() // Always close when done
+```
+
+### Ping()
+
+Verifies the database connection is alive.
+
+```go
+func (e *Engine) Ping(ctx context.Context) error
+```
+
+**Example:**
+
+```go
+if err := eng.Ping(ctx); err != nil {
+    log.Printf("Database connection lost: %v", err)
+}
+```
+
+### IsConnected()
+
+Returns true if the engine is connected to a database.
+
+```go
+func (e *Engine) IsConnected() bool
+```
+
+## Configuration
+
+### ParseConnectionString()
+
+Parses a PostgreSQL connection URL into a `ConnectorConfig`.
+
+```go
+func ParseConnectionString(connStr string) (ConnectorConfig, error)
+```
+
+**Supported formats:**
+- `postgresql://user:password@host:port/dbname`
+- `postgres://user:password@host:port/dbname`
+
+**Example:**
+
+```go
+config, err := engine.ParseConnectionString(
+    "postgresql://admin:secret@db.example.com:5432/production",
+)
+if err != nil {
+    log.Fatal(err)
+}
+
+eng.Connect(ctx, config)
+```
+
+### DefaultConfig()
+
+Returns sensible default configuration values.
+
+```go
+func DefaultConfig() ConnectorConfig
+```
+
+**Returns:**
+```go
+ConnectorConfig{
+    Host:        "localhost",
+    Port:        5432,
+    Database:    "chameleon",
+    User:        "postgres",
+    Password:    "",
+    MaxConns:    10,
+    MinConns:    2,
+    MaxIdleTime: 5 * time.Minute,
+}
+```
+
+## Schema Access
+
+### GetSchema()
+
+Returns the currently loaded schema.
+
+```go
+func (e *Engine) GetSchema() *Schema
+```
+
+**Example:**
+
+```go
+schema := eng.GetSchema()
+for _, entity := range schema.Entities {
+    log.Printf("Entity: %s\n", entity.Name)
+}
+```
+
+### Version()
+
+Returns the ChameleonDB engine version.
+
+```go
+func (e *Engine) Version() string
+```
+
+**Example:**
+
+```go
+log.Printf("ChameleonDB version: %s\n", eng.Version())
+```
+
+## Debug Mode
+
+### WithDebug()
+
+Enables debug output for all operations.
+
+```go
+func (e *Engine) WithDebug(level DebugLevel) *Engine
+```
+
+**Debug Levels:**
+
+<ResponseField name="DebugNone" type="DebugLevel">
+  No debug output (default)
+</ResponseField>
+
+<ResponseField name="DebugSQL" type="DebugLevel">
+  Show generated SQL queries
+</ResponseField>
+
+<ResponseField name="DebugTrace" type="DebugLevel">
+  Show SQL + execution time + row counts
+</ResponseField>
+
+<ResponseField name="DebugExplain" type="DebugLevel">
+  Show SQL + EXPLAIN output (future)
+</ResponseField>
+
+**Example:**
+
+```go
+import "github.com/chameleon-db/chameleondb/chameleon/pkg/engine"
+
+eng := engine.NewEngine()
+eng.WithDebug(engine.DebugTrace)
+
+// All queries now show debug output
+eng.Query("User").Execute(ctx)
+// Output:
+// [SQL]
+// SELECT * FROM users
+//
+// [TRACE] Query on User: 2.3ms, 5 rows
+```
+
+**Environment variable:**
+
+```bash
+# Enable SQL debug
+export CHAMELEON_DEBUG=1
+
+# Enable full trace
+export CHAMELEON_DEBUG=trace
+
+# Enable EXPLAIN (future)
+export CHAMELEON_DEBUG=explain
+```
+
+## Error Handling
+
+### Common Errors
+
+<ResponseField name="vault not initialized" type="error">
+  The Schema Vault hasn't been initialized. Run `chameleon init` first.
+</ResponseField>
+
+<ResponseField name="integrity check failed" type="error">
+  Schema vault has been tampered with. Run `chameleon verify` to investigate.
+</ResponseField>
+
+<ResponseField name="not connected" type="error">
+  Attempted to query/mutate without calling `Connect()` first.
+</ResponseField>
+
+**Example error handling:**
+
+```go
+eng, err := engine.NewEngine()
+if err != nil {
+    if strings.Contains(err.Error(), "vault not initialized") {
+        log.Fatal("Run 'chameleon init' to initialize the vault")
+    }
+    if strings.Contains(err.Error(), "integrity check failed") {
+        log.Fatal("Schema integrity violation detected")
+    }
+    log.Fatal(err)
+}
+```
+
+## Complete Example
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+    "os"
+    
+    "github.com/chameleon-db/chameleondb/chameleon/pkg/engine"
+)
+
+func main() {
+    ctx := context.Background()
+    
+    // 1. Initialize engine
+    eng, err := engine.NewEngine()
+    if err != nil {
+        log.Fatalf("Failed to initialize engine: %v", err)
+    }
+    defer eng.Close()
+    
+    // 2. Connect to database
+    connStr := os.Getenv("DATABASE_URL")
+    config, err := engine.ParseConnectionString(connStr)
+    if err != nil {
+        log.Fatalf("Invalid connection string: %v", err)
+    }
+    
+    if err := eng.Connect(ctx, config); err != nil {
+        log.Fatalf("Failed to connect: %v", err)
+    }
+    
+    // 3. Verify connection
+    if err := eng.Ping(ctx); err != nil {
+        log.Fatalf("Database not responding: %v", err)
+    }
+    
+    fmt.Printf("Connected to ChameleonDB %s\n", eng.Version())
+    
+    // 4. Ready to use
+    users, err := eng.Query("User").Execute(ctx)
+    if err != nil {
+        log.Fatalf("Query failed: %v", err)
+    }
+    
+    fmt.Printf("Found %d users\n", users.Count())
+}
+```
+
+## See Also
+
+- [Query Builder](/api/query-builder) - Build and execute queries
+- [Mutations](/api/mutations) - Insert, update, and delete data
+- [Error Handling](/api/error-handling) - Handle errors gracefully

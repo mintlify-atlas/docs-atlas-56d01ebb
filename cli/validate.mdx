@@ -1,0 +1,367 @@
+---
+title: 'chameleon validate'
+description: 'Validate a ChameleonDB schema file'
+---
+
+## Synopsis
+
+```bash
+chameleon validate [file]
+```
+
+Validate a schema file for syntax and semantic errors.
+
+## Description
+
+The `validate` command checks schema files for:
+
+- **Syntax errors** - Malformed schema syntax
+- **Type errors** - Invalid or unknown types
+- **Reference errors** - Missing entities or fields
+- **Constraint errors** - Invalid primary keys, unique constraints
+- **Circular dependencies** - Detect entity reference cycles
+
+If no file is specified, looks for `schema.cham` in the current directory.
+
+## Arguments
+
+<ParamField path="file" type="string" optional>
+  Path to schema file to validate
+  
+  **Default:** `schema.cham` in current directory
+</ParamField>
+
+## Flags
+
+<ParamField path="--verbose" type="boolean" default="false">
+  Show detailed validation checks passed
+  
+  ```bash
+  chameleon validate --verbose
+  ```
+</ParamField>
+
+## Examples
+
+### Validate Default Schema
+
+```bash
+chameleon validate
+```
+
+**Output (valid):**
+```
+ℹ Validating schema.cham...
+✓ Schema is valid
+```
+
+**Output (with --verbose):**
+```
+ℹ Validating schema.cham...
+✓ Schema is valid
+
+Validation checks passed:
+  ✓ Syntax is correct
+  ✓ All entity references exist
+  ✓ Foreign keys are consistent
+  ✓ Primary keys are defined
+  ✓ No circular dependencies
+```
+
+### Validate Specific File
+
+```bash
+chameleon validate schemas/users.cham
+```
+
+**Output:**
+```
+ℹ Validating schemas/users.cham...
+✓ Schema is valid
+```
+
+### Validation Errors
+
+#### Syntax Error
+
+**schemas/invalid.cham:**
+```chameleon
+entity User {
+    id: uuid primary
+    email: strnig unique,  // Typo: 'strnig' instead of 'string'
+}
+```
+
+```bash
+chameleon validate schemas/invalid.cham
+```
+
+**Output:**
+```
+ℹ Validating schemas/invalid.cham...
+❌ Validation failed
+
+Error at line 3, column 13:
+  3 │     email: strnig unique,
+    │            ^^^^^^
+    │ Unknown type: strnig
+
+Help: Did you mean 'string'?
+
+❌ schema validation failed
+```
+
+#### Missing Primary Key
+
+**schemas/no-pk.cham:**
+```chameleon
+entity Post {
+    title: string,
+    content: string,
+}
+```
+
+```bash
+chameleon validate schemas/no-pk.cham
+```
+
+**Output:**
+```
+ℹ Validating schemas/no-pk.cham...
+❌ Validation failed
+
+Entity 'Post' must have a primary key
+  Suggestion: Add a primary key field:
+    id: uuid primary,
+
+❌ schema validation failed
+```
+
+#### Invalid Reference
+
+**schemas/bad-ref.cham:**
+```chameleon
+entity Post {
+    id: uuid primary,
+    author: UnknownEntity,  // Entity doesn't exist
+}
+```
+
+```bash
+chameleon validate schemas/bad-ref.cham
+```
+
+**Output:**
+```
+ℹ Validating schemas/bad-ref.cham...
+❌ Validation failed
+
+Entity 'UnknownEntity' not found
+  Referenced in: Post.author
+  
+  Suggestion: Define the entity or check for typos
+
+❌ schema validation failed
+```
+
+#### Circular Dependency
+
+**schemas/circular.cham:**
+```chameleon
+entity User {
+    id: uuid primary,
+    posts: [Post],
+}
+
+entity Post {
+    id: uuid primary,
+    author: User,
+    // Circular: Post -> User -> Post
+}
+```
+
+```bash
+chameleon validate schemas/circular.cham
+```
+
+**Output:**
+```
+ℹ Validating schemas/circular.cham...
+❌ Validation failed
+
+Circular dependency detected:
+  User -> Post -> User
+  
+  Suggestion: Use foreign keys instead of direct references
+
+❌ schema validation failed
+```
+
+## Valid Schema Example
+
+**schemas/blog.cham:**
+```chameleon
+entity User {
+    id: uuid primary,
+    email: string unique,
+    name: string,
+    created_at: timestamp default now(),
+}
+
+entity Post {
+    id: uuid primary,
+    title: string,
+    content: string,
+    published: bool,
+    author_id: uuid,
+    created_at: timestamp default now(),
+}
+
+entity Comment {
+    id: uuid primary,
+    content: string,
+    post_id: uuid,
+    user_id: uuid,
+    created_at: timestamp default now(),
+}
+```
+
+```bash
+chameleon validate schemas/blog.cham
+```
+
+**Output:**
+```
+ℹ Validating schemas/blog.cham...
+✓ Schema is valid
+```
+
+## File Not Found
+
+```bash
+chameleon validate missing.cham
+```
+
+**Output:**
+```
+❌ schema file not found: missing.cham
+```
+
+## Validation Checks
+
+The validator performs these checks:
+
+### 1. Syntax Validation
+- Correct entity declarations
+- Valid field syntax
+- Proper use of keywords (primary, unique, default)
+
+### 2. Type Checking
+- All types are recognized (uuid, string, int, bool, timestamp, etc.)
+- Array types are properly declared
+
+### 3. Semantic Validation
+- Each entity has a primary key
+- Referenced entities exist
+- Foreign key types match target primary keys
+- No duplicate field names within an entity
+
+### 4. Constraint Validation
+- Unique constraints are properly defined
+- Default values match field types
+- Indexes reference existing fields
+
+### 5. Relationship Validation
+- Foreign key relationships are valid
+- No unresolvable circular dependencies
+
+## Exit Codes
+
+- `0` - Schema is valid
+- `1` - Validation failed or file not found
+
+## Integration with Migrate
+
+Validation is automatically performed during migration:
+
+```bash
+chameleon migrate --dry-run
+```
+
+If validation fails, migration is aborted:
+
+```
+ℹ Loading schemas from: [./schemas]
+✓ Found 1 schema file(s): [users.cham]
+❌ failed to parse merged schemas:
+   Error in users.cham:5
+   Unknown type 'strnig'
+
+❌ Migration aborted
+```
+
+## Best Practices
+
+### 1. Validate Before Committing
+
+```bash
+# Git pre-commit hook
+#!/bin/bash
+chameleon validate || exit 1
+```
+
+### 2. Validate All Schemas
+
+If you have multiple schema files:
+
+```bash
+for file in schemas/*.cham; do
+  chameleon validate "$file" || exit 1
+done
+```
+
+### 3. CI/CD Integration
+
+```yaml
+# .github/workflows/validate.yml
+name: Validate Schema
+on: [push, pull_request]
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install ChameleonDB
+        run: curl -sSL https://chameleondb.dev/install | sh
+      - name: Validate schema
+        run: chameleon validate
+```
+
+## Troubleshooting
+
+### Validation Passes but Migration Fails
+
+The `validate` command only checks syntax and semantics, not database compatibility.
+
+Use `migrate --dry-run` to check generated SQL:
+
+```bash
+chameleon migrate --dry-run
+```
+
+### Multiple Schema Files
+
+To validate across multiple files, use `migrate --check`:
+
+```bash
+chameleon migrate --check
+```
+
+This validates the merged schema from all files in `schema.paths`.
+
+## See Also
+
+- [`chameleon migrate`](/cli/migrate) - Apply migrations (includes validation)
+- [`chameleon init`](/cli/init) - Initialize project with example schema
+- [Schema Reference](/schema/entities) - Learn schema syntax
+- [Schema Types](/schema/fields-types) - Available field types

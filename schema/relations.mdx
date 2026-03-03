@@ -1,0 +1,403 @@
+---
+title: "Relations"
+description: "Define relationships between entities in ChameleonDB"
+---
+
+Relations define how entities are connected to each other. ChameleonDB supports one-to-many and many-to-one relationships using the `via` keyword.
+
+## Relation Types
+
+ChameleonDB supports two primary relation patterns:
+
+### One-to-Many (Has Many)
+
+Defines a collection relationship where one entity has multiple related entities:
+
+```go
+entity User {
+    id: uuid primary,
+    orders: [Order] via user_id,  // User has many Orders
+}
+```
+
+**Syntax:**
+```go
+fieldName: [TargetEntity] via foreign_key_field
+```
+
+### Many-to-One (Belongs To)
+
+Defines a single relationship where one entity belongs to another:
+
+```go
+entity Order {
+    id: uuid primary,
+    user_id: uuid,
+    user: User,  // Order belongs to User
+}
+```
+
+**Syntax:**
+```go
+fieldName: TargetEntity
+```
+
+## The `via` Keyword
+
+The `via` keyword specifies the foreign key field in the related entity:
+
+```go
+entity User {
+    id: uuid primary,
+    email: string unique,
+    
+    // "via user_id" means: find Orders where order.user_id = user.id
+    orders: [Order] via user_id,
+}
+
+entity Order {
+    id: uuid primary,
+    total: decimal,
+    user_id: uuid,  // Foreign key field
+    
+    user: User,  // Reverse relation (no "via" needed)
+}
+```
+
+<Note>
+The `via` keyword is only used for **one-to-many** relations (arrays). Many-to-one relations infer the foreign key automatically.
+</Note>
+
+## Bidirectional Relations
+
+Most relationships are bidirectional - defined from both sides:
+
+```go
+entity User {
+    id: uuid primary,
+    email: string unique,
+    
+    orders: [Order] via user_id,    // Forward: User → Orders
+    posts: [Post] via author_id,     // Forward: User → Posts
+}
+
+entity Order {
+    id: uuid primary,
+    total: decimal,
+    user_id: uuid,
+    
+    user: User,                      // Reverse: Order → User
+}
+
+entity Post {
+    id: uuid primary,
+    title: string,
+    author_id: uuid,
+    
+    author: User,                    // Reverse: Post → User
+}
+```
+
+## Foreign Key Fields
+
+Foreign key fields must be explicitly declared:
+
+```go
+entity Order {
+    id: uuid primary,
+    total: decimal,
+    user_id: uuid,     // ✓ Foreign key field explicitly declared
+    
+    user: User,        // Relation uses user_id implicitly
+}
+```
+
+<Warning>
+The foreign key field (`user_id`) must match the type of the target entity's primary key.
+</Warning>
+
+## Nested Relations
+
+Relations can be traversed through multiple levels:
+
+```go
+entity User {
+    id: uuid primary,
+    email: string unique,
+    orders: [Order] via user_id,
+}
+
+entity Order {
+    id: uuid primary,
+    total: decimal,
+    user_id: uuid,
+    
+    user: User,
+    items: [OrderItem] via order_id,  // Nested relation
+}
+
+entity OrderItem {
+    id: uuid primary,
+    quantity: int,
+    price: decimal,
+    order_id: uuid,
+    
+    order: Order,
+}
+```
+
+**Querying nested relations:**
+```go
+// Eager load multiple levels
+users := db.Query("User").
+    Include("orders").
+    Include("orders.items").  // Nested include
+    Execute(ctx)
+```
+
+## Self-Referential Relations
+
+Entities can reference themselves:
+
+```go
+entity Category {
+    id: uuid primary,
+    name: string,
+    parent_id: uuid nullable,
+    
+    parent: Category nullable,
+    children: [Category] via parent_id,
+}
+```
+
+## Complete Example
+
+Here's a complete e-commerce schema demonstrating all relation patterns:
+
+```go
+entity User {
+    id: uuid primary,
+    email: string unique,
+    name: string,
+    created_at: timestamp default now(),
+    
+    // One-to-many relations
+    orders: [Order] via user_id,
+    posts: [Post] via author_id,
+}
+
+entity Order {
+    id: uuid primary,
+    total: decimal,
+    status: string,
+    created_at: timestamp default now(),
+    user_id: uuid,
+    
+    // Many-to-one relation
+    user: User,
+    
+    // One-to-many relation
+    items: [OrderItem] via order_id,
+}
+
+entity OrderItem {
+    id: uuid primary,
+    quantity: int,
+    price: decimal,
+    order_id: uuid,
+    product_id: uuid,
+    
+    // Many-to-one relations
+    order: Order,
+    product: Product,
+}
+
+entity Product {
+    id: uuid primary,
+    name: string,
+    price: decimal,
+    stock: int,
+    
+    // One-to-many relation
+    order_items: [OrderItem] via product_id,
+}
+
+entity Post {
+    id: uuid primary,
+    title: string,
+    content: string,
+    author_id: uuid,
+    created_at: timestamp default now(),
+    
+    // Many-to-one relation
+    author: User,
+}
+```
+
+## Relation Validation
+
+ChameleonDB validates relations at compile time:
+
+<Check>
+**Target Exists** - The target entity must be defined in the schema
+</Check>
+
+<Check>
+**Foreign Key Type Match** - Foreign key type must match the target's primary key type
+</Check>
+
+<Check>
+**Foreign Key Exists** - For `via` relations, the foreign key field must exist in the target entity
+</Check>
+
+<Check>
+**No Circular Ownership** - Entities cannot form circular ownership dependencies
+</Check>
+
+## Querying Relations
+
+Relations are traversed using the query API:
+
+### Eager Loading
+
+Load related entities to avoid N+1 queries:
+
+```go
+// Load users with their orders
+users := db.Query("User").
+    Include("orders").  // Eager load orders
+    Execute(ctx)
+
+for _, user := range users {
+    fmt.Printf("%s has %d orders\n", user.Email, len(user.Orders))
+}
+```
+
+### Nested Includes
+
+```go
+// Load users → orders → items (3 levels)
+users := db.Query("User").
+    Include("orders").
+    Include("orders.items").  // Nested include
+    Execute(ctx)
+```
+
+### Multiple Relations
+
+```go
+// Load multiple relations
+users := db.Query("User").
+    Include("orders").
+    Include("posts").  // Load both orders and posts
+    Execute(ctx)
+```
+
+## Best Practices
+
+<Tip>
+**Name foreign keys consistently** - Use `{entity}_id` pattern (e.g., `user_id`, `order_id`)
+</Tip>
+
+<Tip>
+**Define bidirectional relations** - Define both sides for easier querying
+</Tip>
+
+<Tip>
+**Use meaningful relation names** - Choose names that reflect the domain relationship
+</Tip>
+
+```go
+// Good - clear domain meaning
+entity Order {
+    user_id: uuid,
+    user: User,  // "user" is clear
+}
+
+// Better - more specific
+entity Post {
+    author_id: uuid,
+    author: User,  // "author" is more specific than "user"
+}
+```
+
+<Tip>
+**Use eager loading** - Always use `Include()` to avoid N+1 query problems
+</Tip>
+
+## Common Patterns
+
+### Parent-Child
+
+```go
+entity Category {
+    id: uuid primary,
+    name: string,
+    parent_id: uuid nullable,
+    
+    parent: Category nullable,
+    children: [Category] via parent_id,
+}
+```
+
+### Author-Content
+
+```go
+entity User {
+    id: uuid primary,
+    posts: [Post] via author_id,
+    comments: [Comment] via author_id,
+}
+
+entity Post {
+    id: uuid primary,
+    author_id: uuid,
+    author: User,
+}
+```
+
+### Order-Line Items
+
+```go
+entity Order {
+    id: uuid primary,
+    items: [OrderItem] via order_id,
+}
+
+entity OrderItem {
+    id: uuid primary,
+    order_id: uuid,
+    order: Order,
+}
+```
+
+## Limitations
+
+<Warning>
+**Many-to-many not yet supported** - Use a join entity pattern instead:
+
+```go
+// Instead of direct many-to-many:
+// tags: [Tag] many_to_many  // ✗ Not supported
+
+// Use a join entity:
+entity PostTag {
+    id: uuid primary,
+    post_id: uuid,
+    tag_id: uuid,
+    post: Post,
+    tag: Tag,
+}
+```
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Field Types" icon="list" href="/schema/fields-types">
+    Learn about field types for foreign keys
+  </Card>
+  <Card title="Constraints" icon="shield-check" href="/schema/constraints">
+    Add validation to relations
+  </Card>
+</CardGroup>

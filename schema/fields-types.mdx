@@ -1,0 +1,300 @@
+---
+title: "Field Types"
+description: "Supported field types in ChameleonDB schemas"
+---
+
+ChameleonDB provides a strongly-typed field system with compile-time validation. Each field must have an explicit type.
+
+## Basic Syntax
+
+```go
+fieldName: type modifiers
+```
+
+Example:
+```go
+email: string unique
+age: int nullable
+created_at: timestamp default now()
+```
+
+## Scalar Types
+
+### UUID
+
+Universally unique identifier (RFC 4122):
+
+<ParamField path="uuid" type="uuid">
+  128-bit universally unique identifier. Commonly used for primary keys.
+  
+  **Example:**
+  ```go
+  id: uuid primary
+  user_id: uuid
+  ```
+  
+  **SQL Mapping:** `UUID` (PostgreSQL)
+</ParamField>
+
+### String
+
+Variable-length text data:
+
+<ParamField path="string" type="string">
+  UTF-8 encoded text of arbitrary length.
+  
+  **Example:**
+  ```go
+  email: string unique
+  name: string
+  bio: string nullable
+  ```
+  
+  **SQL Mapping:** `TEXT` (PostgreSQL)
+</ParamField>
+
+### Int
+
+Signed integer:
+
+<ParamField path="int" type="int">
+  64-bit signed integer (-9,223,372,036,854,775,808 to 9,223,372,036,854,775,807).
+  
+  **Example:**
+  ```go
+  age: int
+  quantity: int
+  views: int nullable
+  ```
+  
+  **SQL Mapping:** `BIGINT` (PostgreSQL)
+</ParamField>
+
+### Decimal
+
+Arbitrary precision decimal number:
+
+<ParamField path="decimal" type="decimal">
+  Fixed-point decimal number with arbitrary precision. Suitable for currency and financial calculations.
+  
+  **Example:**
+  ```go
+  price: decimal
+  total: decimal
+  monthly_spent: decimal @olap
+  ```
+  
+  **SQL Mapping:** `NUMERIC` (PostgreSQL)
+</ParamField>
+
+### Bool
+
+Boolean value:
+
+<ParamField path="bool" type="bool">
+  True or false value.
+  
+  **Example:**
+  ```go
+  published: bool
+  active: bool
+  verified: bool nullable
+  ```
+  
+  **SQL Mapping:** `BOOLEAN` (PostgreSQL)
+</ParamField>
+
+### Timestamp
+
+Date and time with timezone:
+
+<ParamField path="timestamp" type="timestamp">
+  Date and time value with timezone information.
+  
+  **Example:**
+  ```go
+  created_at: timestamp default now()
+  updated_at: timestamp
+  deleted_at: timestamp nullable
+  ```
+  
+  **SQL Mapping:** `TIMESTAMPTZ` (PostgreSQL)
+</ParamField>
+
+### Float
+
+Floating-point number:
+
+<ParamField path="float" type="float">
+  64-bit floating-point number (IEEE 754 double precision).
+  
+  **Example:**
+  ```go
+  rating: float
+  score: float nullable
+  ```
+  
+  **SQL Mapping:** `DOUBLE PRECISION` (PostgreSQL)
+  
+  <Warning>
+  For currency or precise calculations, use `decimal` instead of `float` to avoid rounding errors.
+  </Warning>
+</ParamField>
+
+## Special Types
+
+### Vector
+
+Fixed-size vector for embeddings:
+
+<ParamField path="vector(N)" type="vector">
+  Fixed-size vector of N dimensions for machine learning embeddings.
+  
+  **Syntax:**
+  ```go
+  vector(dimensions)
+  ```
+  
+  **Example:**
+  ```go
+  embedding: vector(384) @vector
+  embedding_large: vector(1536) @vector
+  ```
+  
+  **Requirements:**
+  - Must specify dimension count
+  - Typically used with `@vector` annotation
+  - Dimension must be a positive integer
+  
+  **SQL Mapping:** `VECTOR(N)` (PostgreSQL with pgvector extension)
+</ParamField>
+
+## Collection Types
+
+### Array
+
+Ordered collection of values:
+
+<ParamField path="[type]" type="array">
+  Array of values of a single type.
+  
+  **Syntax:**
+  ```go
+  [elementType]
+  ```
+  
+  **Example:**
+  ```go
+  tags: [string]
+  scores: [int]
+  prices: [decimal]
+  ```
+  
+  **SQL Mapping:** `type[]` (PostgreSQL array type)
+</ParamField>
+
+## Type Reference Table
+
+| ChameleonDB Type | Description | PostgreSQL Mapping | Example |
+|------------------|-------------|-------------------|----------|
+| `uuid` | Unique identifier | `UUID` | `id: uuid primary` |
+| `string` | Text data | `TEXT` | `name: string` |
+| `int` | Integer | `BIGINT` | `age: int` |
+| `decimal` | Precise decimal | `NUMERIC` | `price: decimal` |
+| `bool` | Boolean | `BOOLEAN` | `active: bool` |
+| `timestamp` | Date/time | `TIMESTAMPTZ` | `created_at: timestamp` |
+| `float` | Floating-point | `DOUBLE PRECISION` | `rating: float` |
+| `vector(N)` | ML embedding | `VECTOR(N)` | `embedding: vector(384)` |
+| `[type]` | Array | `type[]` | `tags: [string]` |
+
+## Complete Example
+
+```go
+entity Product {
+    // Identity
+    id: uuid primary,
+    sku: string unique,
+    
+    // Basic info
+    name: string,
+    description: string nullable,
+    
+    // Pricing
+    price: decimal,
+    discount: decimal nullable,
+    
+    // Inventory
+    stock: int,
+    reserved: int,
+    
+    // Flags
+    active: bool,
+    featured: bool,
+    
+    // Timestamps
+    created_at: timestamp default now(),
+    updated_at: timestamp nullable,
+    
+    // Collections
+    tags: [string],
+    categories: [string],
+    
+    // Backend-specific
+    views_today: int @cache,
+    monthly_sales: decimal @olap,
+    embedding: vector(384) @vector,
+}
+```
+
+## Type Validation
+
+ChameleonDB validates field types at compile time:
+
+<Check>
+**Type Existence** - All types must be recognized
+</Check>
+
+<Check>
+**Vector Dimensions** - `vector(N)` requires a valid dimension count
+</Check>
+
+<Check>
+**Array Elements** - Array element types must be valid scalar types
+</Check>
+
+<Check>
+**Default Values** - Default values must match the field type
+</Check>
+
+## Best Practices
+
+<Tip>
+**Use `uuid` for primary keys** - UUIDs prevent ID collisions and are globally unique
+</Tip>
+
+<Tip>
+**Use `decimal` for money** - Never use `float` for currency to avoid rounding errors
+</Tip>
+
+<Tip>
+**Use `timestamp` for dates** - Always use timezone-aware timestamps
+</Tip>
+
+<Tip>
+**Be explicit** - Always specify types; ChameleonDB does not infer types
+</Tip>
+
+<Warning>
+Avoid using `nullable` unless truly necessary. Explicit null handling makes your domain model clearer.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Constraints" icon="shield-check" href="/schema/constraints">
+    Add validation with constraints
+  </Card>
+  <Card title="Relations" icon="link" href="/schema/relations">
+    Define entity relationships
+  </Card>
+</CardGroup>
