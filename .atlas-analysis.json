@@ -1,0 +1,151 @@
+{
+  "projectType": "data-platform",
+  "projectName": "ChameleonDB",
+  "projectDescription": "Schema-governed database platform with explicit integrity guarantees and versioned schema management.",
+  "theme": "aspen",
+  "primaryColor": "#7C3AED",
+  "lightColor": "#A78BFA",
+  "darkColor": "#5B21B6",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/schema-vault",
+              "concepts/integrity-modes",
+              "concepts/schema-language",
+              "concepts/architecture"
+            ]
+          },
+          {
+            "group": "Schema Language",
+            "pages": [
+              "schema/entities",
+              "schema/fields-types",
+              "schema/relations",
+              "schema/constraints",
+              "schema/annotations"
+            ]
+          },
+          {
+            "group": "Query System",
+            "pages": [
+              "queries/overview",
+              "queries/filtering",
+              "queries/relations",
+              "queries/advanced"
+            ]
+          },
+          {
+            "group": "Mutations",
+            "pages": [
+              "mutations/insert",
+              "mutations/update",
+              "mutations/delete",
+              "mutations/safety"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/migrations",
+              "guides/introspection",
+              "guides/mode-management",
+              "guides/debugging"
+            ]
+          },
+          {
+            "group": "Security",
+            "pages": [
+              "security/overview",
+              "security/vault-integrity",
+              "security/mode-enforcement",
+              "security/best-practices"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "CLI Reference",
+        "groups": [
+          {
+            "group": "Commands",
+            "pages": [
+              "cli/overview",
+              "cli/init",
+              "cli/migrate",
+              "cli/validate",
+              "cli/verify",
+              "cli/status",
+              "cli/journal",
+              "cli/config",
+              "cli/introspect"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Go SDK",
+            "pages": [
+              "api/engine",
+              "api/query-builder",
+              "api/mutations",
+              "api/error-handling"
+            ]
+          },
+          {
+            "group": "Rust Core",
+            "pages": [
+              "api/parser",
+              "api/type-checker",
+              "api/ffi-interface"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Schema Vault with versioned, hash-verified schemas",
+    "Integrity Modes for runtime governance (readonly/standard/privileged/emergency)",
+    "Type-safe schema DSL with compile-time validation",
+    "Query builder with field projection and eager loading",
+    "Automatic schema migrations with PostgreSQL backend",
+    "Database introspection (DB to schema generation)",
+    "IdentityMap for automatic object deduplication",
+    "Complete audit trail with append-only integrity log"
+  ],
+  "publicApiSurface": [
+    "chameleon init - Initialize project with Schema Vault",
+    "chameleon migrate - Generate and apply schema migrations",
+    "chameleon validate - Validate schema syntax and semantics",
+    "chameleon verify - Verify vault integrity with SHA256 hashing",
+    "chameleon status - Show vault and mode status",
+    "chameleon journal schema - View schema version history",
+    "chameleon config - Manage integrity modes and settings",
+    "chameleon introspect - Generate schema from existing database",
+    "engine.NewEngine() - Initialize database connection with vault",
+    "Query(entity) - Build and execute type-safe queries",
+    "Insert(entity) - Insert records with validation",
+    "Update(entity) - Update records with safety guards",
+    "Delete(entity) - Delete records with WHERE clause requirement",
+    "Filter(field, op, value) - Add filter conditions to queries",
+    "Include(relation) - Eager load related entities",
+    "Select(fields...) - Project specific fields",
+    "Debug() - Enable SQL query visibility"
+  ]
+}
